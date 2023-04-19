@@ -1,3 +1,4 @@
 checkpoints/
 *.swp
 .DS_store
+config.json
