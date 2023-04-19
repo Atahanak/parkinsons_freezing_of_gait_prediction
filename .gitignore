@@ -2,3 +2,4 @@ checkpoints/
 *.swp
 .DS_store
 config.json
+submission.csv
