@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[97]:
+# In[161]:
 
 
 import os
@@ -12,7 +12,7 @@ import glob
 import json
 
 
-# In[98]:
+# In[162]:
 
 
 from tqdm.notebook import tqdm
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 
-# In[99]:
+# In[163]:
 
 
 import torch
@@ -33,14 +33,14 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
 
 
-# In[100]:
+# In[164]:
 
 
 from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from sklearn.metrics import average_precision_score
 
 
-# In[101]:
+# In[165]:
 
 
 class Config:
@@ -88,7 +88,7 @@ cfg = Config()
 cfg.num_workers
 
 
-# In[102]:
+# In[166]:
 
 
 cfg.device
@@ -96,7 +96,7 @@ cfg.device
 
 # ## Data - Preprocessing
 
-# In[103]:
+# In[167]:
 
 
 """
@@ -234,7 +234,7 @@ class FOGDataset(Dataset):
         return self.length
 
 
-# In[104]:
+# In[168]:
 
 
 """
@@ -281,7 +281,7 @@ for i, (train_index, valid_index) in enumerate(sgkf.split(X=metadata['Id'], y=[1
 """
 
 
-# In[105]:
+# In[169]:
 
 
 # The actual train-test split (based on Fold 2)
@@ -323,27 +323,27 @@ train_fpaths = [(f, 'de') for f in train_fpaths_de] + [(f, 'tdcs') for f in trai
 valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
 
 
-# In[106]:
+# In[170]:
 
 
 gc.collect()
 
 
-# In[107]:
+# In[171]:
 
 
 fog_train = FOGDataset(train_fpaths)
 fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True) #, num_workers=cfg.num_workers)
 
 
-# In[108]:
+# In[172]:
 
 
 fog_valid = FOGDataset(valid_fpaths)
 fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
 
 
-# In[109]:
+# In[173]:
 
 
 print("Dataset size:", fog_train.__len__())
@@ -352,7 +352,7 @@ print("Batch size:", fog_train_loader.batch_size)
 print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
 
 
-# In[110]:
+# In[174]:
 
 
 print("Dataset size:", fog_valid.__len__())
@@ -363,7 +363,7 @@ print("Total size:", len(fog_valid_loader) * fog_valid_loader.batch_size)
 
 # ## Model
 
-# In[111]:
+# In[189]:
 
 
 def _block(in_features, out_features, drop_rate):
@@ -377,7 +377,8 @@ def _block(in_features, out_features, drop_rate):
 class FOGModel(nn.Module):
     def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
         super(FOGModel, self).__init__()
-        #self.dropout = nn.Dropout(p)
+        self.hparams = {}
+        self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
         self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
         self.out_layer = nn.Linear(dim, 3)
@@ -393,11 +394,11 @@ class FOGModel(nn.Module):
 class FOGTransformer(nn.Module):
     def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
         super(FOGTransformer, self).__init__()
+        self.hparams = {}
         self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=8, dim_feedforward=dim)
         self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
-
         self.out_layer = nn.Linear(dim, 3)
 
     def forward(self, x):
@@ -408,7 +409,7 @@ class FOGTransformer(nn.Module):
         return x
 
 
-# In[112]:
+# In[190]:
 
 
 # get the number of parameters in the model
@@ -419,7 +420,7 @@ print(f'The model has {count_parameters(FOGTransformer()):,} trainable parameter
 print(f'The model has {count_parameters(FOGModel()):,} trainable parameters')
 
 
-# In[113]:
+# In[177]:
 
 
 """
@@ -502,7 +503,7 @@ def validation(model, criterion, valid_loader):
 
 # ## Fine - Tuning
 
-# In[114]:
+# In[191]:
 
 
 class FOGModule(pl.LightningModule):
@@ -652,7 +653,7 @@ class FOGModule(pl.LightningModule):
         
 
 
-# In[118]:
+# In[192]:
 
 
 def train_model(module, model, train_loader, val_loader, test_loader, save_name = None, **kwargs):
@@ -674,6 +675,10 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
                          log_every_n_steps=50)                                                           
     trainer.logger._log_graph = True         # If True, we plot the computation graph in tensorboard
     trainer.logger._default_hp_metric = True
+
+    # log hyperparameters, including model and custom parameters
+    model.hparams.update(cfg.hparams)
+    trainer.logger.log_hyperparams(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
     pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + ".ckpt")
@@ -698,18 +703,18 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     return lmodel, trainer, result
 
 
-# In[119]:
+# In[193]:
 
 
 model = FOGModel()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams=cfg.hparams)
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
 print(json.dumps(cfg.hparams), sort_keys=True, indent=4)
-print(json.dumps(result, sort_keys=True, indent=4))
+result
 
 
 # ## Submission
 
-# In[117]:
+# In[ ]:
 
 
 model = FOGModule.load_from_checkpoint(trainer.checkpoint_callback.best_model_path)
