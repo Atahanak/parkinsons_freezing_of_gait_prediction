@@ -702,8 +702,9 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 
 
 model = FOGModel()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
-result
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams=cfg.hparams)
+print(json.dumps(cfg.hparams), sort_keys=True, indent=4)
+print(json.dumps(result, sort_keys=True, indent=4))
 
 
 # ## Submission
