@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[161]:
+# In[2]:
 
 
 import os
@@ -12,7 +12,7 @@ import glob
 import json
 
 
-# In[162]:
+# In[3]:
 
 
 from tqdm.notebook import tqdm
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 
-# In[163]:
+# In[4]:
 
 
 import torch
@@ -33,14 +33,14 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
 
 
-# In[164]:
+# In[5]:
 
 
 from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from sklearn.metrics import average_precision_score
 
 
-# In[165]:
+# In[6]:
 
 
 class Config:
@@ -72,6 +72,7 @@ class Config:
     model_dropout = hparams["model_dropout"]
     model_hidden = hparams["model_hidden"]
     model_nblocks = hparams["model_nblocks"]
+    model_nhead = hparams["model_nhead"]
 
     lr = hparams["lr"]
     milestones = hparams["milestones"]
@@ -79,7 +80,7 @@ class Config:
 
     num_epochs = hparams["num_epochs"]
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    num_workers = 32 if torch.cuda.is_available() else 1
+    num_workers = os.cpu_count()
 
     feature_list = ['AccV', 'AccML', 'AccAP']
     label_list = ['StartHesitation', 'Turn', 'Walking']
@@ -88,7 +89,7 @@ cfg = Config()
 cfg.num_workers
 
 
-# In[166]:
+# In[7]:
 
 
 cfg.device
@@ -96,7 +97,7 @@ cfg.device
 
 # ## Data - Preprocessing
 
-# In[167]:
+# In[14]:
 
 
 """
@@ -158,10 +159,11 @@ class FOGDataset(Dataset):
         return self.length
 """
 class FOGDataset(Dataset):
-    def __init__(self, fpaths, scale=9.806, split="train"):
+    def __init__(self, fpaths, scale=9.806, split="train", state="fine-tune"):
         super(FOGDataset, self).__init__()
         tm = time.time()
         self.split = split
+        self.state = state
         self.scale = scale
         
         self.fpaths = fpaths
@@ -171,10 +173,12 @@ class FOGDataset(Dataset):
         self.end_indices = []
         self.shapes = []
         _length = 0
+        print("initializing...")
         for df in self.dfs:
             self.shapes.append(df.shape[0])
             _length += df.shape[0]
             self.end_indices.append(_length)
+            print(df.shape[0], _length)
         
         self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float16)
         self.length = self.dfs.shape[0]
@@ -186,8 +190,13 @@ class FOGDataset(Dataset):
         gc.collect()
         
     def read(self, f, _type):
-        df = pd.read_csv(f)
-        if self.split == "test":
+        print(f"Reading file {f}...")
+        if self.state == "pre-train":
+            df = pd.read_parquet(f)
+        elif self.state == "fine-tune": 
+            df = pd.read_csv(f)
+            
+        if self.split == "test" or self.state == "pre-train":
             return np.array(df)
         
         if _type =="tdcs":
@@ -225,13 +234,83 @@ class FOGDataset(Dataset):
         if self.split == "test":
             return _id, x, t
         
-        y = self.dfs[row_idx, 4:7].astype('float')
+        if self.state == "fine-tune":
+            y = self.dfs[row_idx, 4:7].astype('float')
+        elif self.state == "pre-train":
+            y = self.dfs[row_idx - cfg.wx*(cfg.window_past + cfg.window_future) : row_idx + cfg.wx*cfg.window_future, 1:4]
+        
         y = torch.tensor(y)
         
         return x, y, t
     
     def __len__(self):
         return self.length
+
+
+# ## Model
+
+# In[9]:
+
+
+def _block(in_features, out_features, drop_rate):
+    return nn.Sequential(
+        nn.Linear(in_features, out_features),
+        nn.BatchNorm1d(out_features),
+        nn.ReLU(),
+        nn.Dropout(drop_rate)
+    )
+
+class FOGModel(nn.Module):
+    def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
+        super(FOGModel, self).__init__()
+        self.hparams = {}
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg.window_size*3, dim)
+        self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
+        self.out_layer = nn.Linear(dim, 3)
+        
+    def forward(self, x):
+        x = x.view(-1, cfg.window_size*3)
+        x = self.in_layer(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.out_layer(x)
+        return x
+
+class FOGTransformerEncoder(nn.Module):
+    def __init__(self, state="fine-tune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
+        super(FOGTransformerEncoder, self).__init__()
+        self.hparams = {}
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg.window_size*3, dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
+        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
+
+        if state == "pre-train":
+            self.out_layer = nn.Linear(dim, cfg.window_future * cfg.wx)
+        elif state == "fine-tune":
+            self.out_layer = nn.Linear(dim, 3)
+
+    def forward(self, x):
+        x = x.view(-1, cfg.window_size*3)
+        x = self.in_layer(x)
+        x = self.transformer(x)
+        x = self.out_layer(x)
+        return x
+
+
+# # Pre-Training
+
+# In[15]:
+
+
+pretrain_paths = [(f, 'unlabeled') for f in glob.glob(f"{cfg.DATA_DIR}unlabeled/*.parquet")]
+fog_pretrain = FOGDataset(pretrain_paths, state="pre-train")
+fog_train_loader = DataLoader(fog_pretrain, batch_size=cfg.batch_size, shuffle=True) #, num_workers=cfg.num_workers)
+print("Dataset size:", fog_pretrain.__len__())
+print("Number of batches:", len(fog_train_loader))
+print("Batch size:", fog_train_loader.batch_size)
+print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
 
 
 # In[168]:
@@ -334,6 +413,10 @@ gc.collect()
 
 fog_train = FOGDataset(train_fpaths)
 fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True) #, num_workers=cfg.num_workers)
+print("Dataset size:", fog_train.__len__())
+print("Number of batches:", len(fog_train_loader))
+print("Batch size:", fog_train_loader.batch_size)
+print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
 
 
 # In[172]:
@@ -341,72 +424,10 @@ fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True
 
 fog_valid = FOGDataset(valid_fpaths)
 fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
-
-
-# In[173]:
-
-
-print("Dataset size:", fog_train.__len__())
-print("Number of batches:", len(fog_train_loader))
-print("Batch size:", fog_train_loader.batch_size)
-print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
-
-
-# In[174]:
-
-
 print("Dataset size:", fog_valid.__len__())
 print("Number of batches:", len(fog_valid_loader))
 print("Batch size:", fog_valid_loader.batch_size)
 print("Total size:", len(fog_valid_loader) * fog_valid_loader.batch_size)
-
-
-# ## Model
-
-# In[189]:
-
-
-def _block(in_features, out_features, drop_rate):
-    return nn.Sequential(
-        nn.Linear(in_features, out_features),
-        nn.BatchNorm1d(out_features),
-        nn.ReLU(),
-        nn.Dropout(drop_rate)
-    )
-
-class FOGModel(nn.Module):
-    def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
-        super(FOGModel, self).__init__()
-        self.hparams = {}
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
-        self.out_layer = nn.Linear(dim, 3)
-        
-    def forward(self, x):
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        for block in self.blocks:
-            x = block(x)
-        x = self.out_layer(x)
-        return x
-
-class FOGTransformer(nn.Module):
-    def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
-        super(FOGTransformer, self).__init__()
-        self.hparams = {}
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=8, dim_feedforward=dim)
-        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
-        self.out_layer = nn.Linear(dim, 3)
-
-    def forward(self, x):
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        x = self.transformer(x)
-        x = self.out_layer(x)
-        return x
 
 
 # In[190]:
@@ -416,7 +437,7 @@ class FOGTransformer(nn.Module):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-print(f'The model has {count_parameters(FOGTransformer()):,} trainable parameters')
+print(f'The model has {count_parameters(FOGTransformerEncoder()):,} trainable parameters')
 print(f'The model has {count_parameters(FOGModel()):,} trainable parameters')
 
 
@@ -678,7 +699,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 
     # log hyperparameters, including model and custom parameters
     model.hparams.update(cfg.hparams)
-    trainer.logger.log_hyperparams(model.hparams)
+    del model.hparams["milestones"] # = str(model.hparams["milestones"])
+    trainer.logger.log_metrics(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
     pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + ".ckpt")
@@ -708,7 +730,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 
 model = FOGModel()
 model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
-print(json.dumps(cfg.hparams), sort_keys=True, indent=4)
+print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
+print(json.dumps(result, sort_keys=True, indent=4))
 result
 
 
@@ -743,7 +766,8 @@ sample_submission = pd.read_csv(f"{cfg.DATA_DIR}sample_submission.csv")
 print(sample_submission.shape)
 
 preds = np.array(preds)
-submission = pd.DataFrame({'Id': ids, 'StartHesitation': np.round(preds[:,0],5),                            'Turn': np.round(preds[:,1],5), 'Walking': np.round(preds[:,2],5)})
+submission = pd.DataFrame({'Id': ids, 'StartHesitation': np.round(preds[:,0],5), \
+                           'Turn': np.round(preds[:,1],5), 'Walking': np.round(preds[:,2],5)})
 
 submission = pd.merge(sample_submission[['Id']], submission, how='left', on='Id').fillna(0.0)
 submission.to_csv(f"submission.csv", index=False)
