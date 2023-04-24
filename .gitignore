@@ -2,4 +2,5 @@ checkpoints/
 *.swp
 .DS_store
 config.json
+pretrain-config.json
 submission.csv
