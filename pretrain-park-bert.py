@@ -30,8 +30,11 @@ import torch.nn.functional as F
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.strategies.ddp import DDPStrategy
 from torchmetrics.functional.classification import multiclass_average_precision
+print(pl.__version__)
 
+torch.set_float32_matmul_precision('high')
 
 # In[9]:
 
@@ -100,7 +103,6 @@ class FOGDataset(Dataset):
         self.end_indices = []
         self.shapes = []
         _length = 0
-        print("initializing...")
         for df in self.dfs:
             self.shapes.append(df.shape[0])
             _length += df.shape[0]
@@ -112,7 +114,7 @@ class FOGDataset(Dataset):
         
         shape1 = self.dfs.shape[1]
         
-        self.dfs = np.concatenate([np.zeros((cfg.wx*cfg.window_past, shape1)), self.dfs, np.zeros((cfg.wx*cfg.window_future, shape1))], axis=0)
+        self.dfs = np.concatenate([np.zeros((cfg.wx*cfg.window_past, shape1)), self.dfs, np.zeros((2*cfg.wx*cfg.window_future, shape1))], axis=0)
         print(f"Dataset initialized in {time.time() - tm} secs!")
         gc.collect()
         
@@ -156,16 +158,15 @@ class FOGDataset(Dataset):
         x = x[::cfg.wx, :][::-1, :]
         x = torch.tensor(x.astype('float'))
         
-        t = {} #self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
+        t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
         
         y = self.dfs[row_idx + cfg.wx*cfg.window_future : row_idx + 2*cfg.wx*cfg.window_future, 1:4]
         y = y[::cfg.wx, :][::-1, :]
         y = torch.tensor(y.astype('float'))
         return x, y, t
-    
+
     def __len__(self):
         return self.length
-
 
 # ## Model
 
@@ -216,22 +217,24 @@ class FOGTransformerEncoder(nn.Module):
         x = self.in_layer(x)
         x = self.transformer(x)
         x = self.out_layer(x)
-        return x.reshape(-1, cfg.window_future, 3)
+        #return x.reshape(-1, cfg.window_future, 3)
+        return x
 
 
 # # Pre-Training
 
 # In[12]:
 
-
-pretrain_paths = [(f, 'temp') for f in glob.glob(f"{cfg.DATA_DIR}temp/*.parquet")]
+print("Initializing dataset...")
+pretrain_paths = [(f, 'unlabeled') for f in glob.glob(f"{cfg.DATA_DIR}unlabeled/*.parquet")]
 fog_pretrain = FOGDataset(pretrain_paths, state="pre-train")
-fog_train_loader = DataLoader(fog_pretrain, batch_size=cfg.batch_size, shuffle=True) #, num_workers=cfg.num_workers)
+fog_train_loader = DataLoader(fog_pretrain, batch_size=cfg.batch_size, num_workers=16) #cfg.num_workers)
 print("Dataset size:", fog_pretrain.__len__())
 print("Number of batches:", len(fog_train_loader))
 print("Batch size:", fog_train_loader.batch_size)
 print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
 
+item = next(iter(fog_train_loader))
 
 # In[13]:
 
@@ -247,6 +250,8 @@ class PreTrainingFogModule(pl.LightningModule):
         super(PreTrainingFogModule, self).__init__()
         # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
         self.save_hyperparameters()
+        # Example input for visualizing the graph in Tensorboard
+        self.example_input_array = torch.zeros((1, cfg.window_size, 3), dtype=torch.float32)
 
         self.model = model
         self.criterion = nn.MSELoss()
@@ -259,6 +264,7 @@ class PreTrainingFogModule(pl.LightningModule):
         x = x.float()
         y = y.float()
         y_hat = self.model(x)
+        y = y.view(y.shape[0], -1)
         loss = self.criterion(y_hat, y)
         self.log('train_loss', loss)
         return loss
@@ -282,9 +288,10 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
                          accelerator="gpu" if str(cfg.device).startswith("cuda") else "cpu",                     # We run on a GPU (if possible)
                          devices=torch.cuda.device_count() if str(cfg.device).startswith("cuda") else 1,                                                                          # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
                          max_epochs=cfg.num_epochs,                                                                     # How many epochs to train for if no patience is set
-                         callbacks=[ModelCheckpoint(save_weights_only=True, mode="max", monitor="avg_val_precision"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+                         callbacks=[ModelCheckpoint(save_weights_only=True, mode="max", monitor="train_loss"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
+                         strategy=DDPStrategy(find_unused_parameters=True),
                          logger = True,
                          # val_check_interval=0.5,
                          log_every_n_steps=50)                                                           
@@ -309,7 +316,7 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
 
     train_loss = trainer.logged_metrics["train_loss"]
     result = {
-        "train_loss": train_loss
+        "train_loss": train_loss.item()
     }
 
     return lmodel, trainer, result

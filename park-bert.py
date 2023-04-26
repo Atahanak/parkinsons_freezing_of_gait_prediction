@@ -669,7 +669,7 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     # Create a PyTorch Lightning trainer with the generation callback
     trainer = pl.Trainer(default_root_dir=os.path.join(cfg.CHECKPOINT_PATH, save_name),                          # Where to save models
                          accelerator="gpu" if str(cfg.device).startswith("cuda") else "cpu",                     # We run on a GPU (if possible)
-                         devices=1,                                                                          # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
+                         devices=torch.cuda.device_count() if str(cfg.device).startswith("cuda") else 1,         # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
                          max_epochs=cfg.num_epochs,                                                                     # How many epochs to train for if no patience is set
                          callbacks=[ModelCheckpoint(save_weights_only=True, mode="max", monitor="avg_val_precision"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
