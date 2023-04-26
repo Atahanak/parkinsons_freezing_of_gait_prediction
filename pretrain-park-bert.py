@@ -202,22 +202,23 @@ class FOGTransformerEncoder(nn.Module):
     def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
         super(FOGTransformerEncoder, self).__init__()
         self.hparams = {}
+        self.state = state
         self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
         self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
 
-        if state == "pretrain":
-            self.out_layer = nn.Linear(dim, cfg.window_future * 3)
-        elif state == "finetune":
-            self.out_layer = nn.Linear(dim, 3)
+        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_finetune = nn.Linear(dim, 3)
 
     def forward(self, x):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         x = self.transformer(x)
-        x = self.out_layer(x)
-        #return x.reshape(-1, cfg.window_future, 3)
+        if self.state == "pre-train":
+            x = self.out_layer_pretrain(x)
+        else:
+            x = self.out_layer_finetune(x)
         return x
 
 
@@ -304,15 +305,13 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
     trainer.logger.log_metrics(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
-    pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + ".ckpt")
-    if os.path.isfile(pretrained_filename):
-        print(f"Found pretrained model at {pretrained_filename}, loading...")
-        model = module.load_from_checkpoint(pretrained_filename) # Automatically loads the model with the saved hyperparameters
-    else:
-        pl.seed_everything(42) # To be reproducable
-        lmodel = module(model, **kwargs)
-        trainer.fit(lmodel, train_loader)
-        lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
+    pl.seed_everything(42) # To be reproducable
+    lmodel = module(model, **kwargs)
+    trainer.fit(lmodel, train_loader)
+    lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
+    
+    #save model ready to be loaded for finetuning
+    torch.save(lmodel.model.state_dict(), os.path.join(cfg.CHECKPOINT_PATH, save_name, "_final.pt"))
 
     train_loss = trainer.logged_metrics["train_loss"]
     result = {

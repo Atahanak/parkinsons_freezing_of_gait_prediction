@@ -391,25 +391,27 @@ class FOGModel(nn.Module):
         x = self.out_layer(x)
         return x
 
-class FOGTransformer(nn.Module):
-    def __init__(self, state="finetuning", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
-        super(FOGTransformer, self).__init__()
+class FOGTransformerEncoder(nn.Module):
+    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
+        super(FOGTransformerEncoder, self).__init__()
         self.hparams = {}
+        self.state = state
         self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=8, dim_feedforward=dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
         self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
 
-        if state == "pretrain":
-            self.out_layer = nn.Linear(dim, cfg.window_future * 3)
-        elif state == "finetune":
-            self.out_layer = nn.Linear(dim, 3)
+        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_finetune = nn.Linear(dim, 3)
 
     def forward(self, x):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         x = self.transformer(x)
-        x = self.out_layer(x)
+        if self.state == "pre-train":
+            x = self.out_layer_pretrain(x)
+        else:
+            x = self.out_layer_finetune(x)
         return x
 
 
@@ -420,7 +422,7 @@ class FOGTransformer(nn.Module):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-print(f'The model has {count_parameters(FOGTransformer()):,} trainable parameters')
+print(f'The model has {count_parameters(FOGTransformerEncoder()):,} trainable parameters')
 print(f'The model has {count_parameters(FOGModel()):,} trainable parameters')
 
 
@@ -685,15 +687,16 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     trainer.logger.log_hyperparams(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
-    pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + ".ckpt")
+    pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + "_final.pt")
     if os.path.isfile(pretrained_filename):
         print(f"Found pretrained model at {pretrained_filename}, loading...")
-        model = module.load_from_checkpoint(pretrained_filename) # Automatically loads the model with the saved hyperparameters
+        lmodel = module.load_from_checkpoint(pretrained_filename) # Automatically loads the model with the saved hyperparameters
     else:
-        pl.seed_everything(42) # To be reproducable
         lmodel = module(model, **kwargs)
-        trainer.fit(lmodel, train_loader, val_loader)
-        lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
+    
+    pl.seed_everything(42) # To be reproducable
+    trainer.fit(lmodel, train_loader, val_loader)
+    lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
 
     # Test best model on validation set
     val_result = trainer.test(lmodel, val_loader, verbose=False)
@@ -710,8 +713,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 # In[193]:
 
 
-model = FOGModel()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
+model = FOGTransformerEncoder()
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGTransformerEncoder", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
 print(json.dumps(cfg.hparams), sort_keys=True, indent=4)
 result
 
