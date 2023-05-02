@@ -215,11 +215,22 @@ class FOGTransformerEncoder(nn.Module):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         x = self.transformer(x)
-        if self.state == "pre-train":
+        if self.state == "pretrain":
             x = self.out_layer_pretrain(x)
         else:
             x = self.out_layer_finetune(x)
         return x
+
+
+# In[ ]:
+
+
+# get the number of parameters in the model
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+print(f'FOGTransformerEncoder has {count_parameters(FOGTransformerEncoder()):,} trainable parameters')
+print(f'FOGModel has {count_parameters(FOGModel()):,} trainable parameters')
 
 
 # # Pre-Training
@@ -311,7 +322,9 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
     lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
     
     #save model ready to be loaded for finetuning
-    torch.save(lmodel.model.state_dict(), os.path.join(cfg.CHECKPOINT_PATH, save_name, "_final.pt"))
+    pretrained_file_name = os.path.join(cfg.CHECKPOINT_PATH, save_name, f"{cfg.model_hidden}_{cfg.model_nblocks}_final.pt")
+    print(f"Saving pretrained model to: {pretrained_file_name}")
+    torch.save(lmodel.model.state_dict(), pretrained_file_name)
 
     train_loss = trainer.logged_metrics["train_loss"]
     result = {
@@ -324,22 +337,12 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
 # In[16]:
 
 
+print(f"# of devices: {torch.cuda.device_count()}")
 model = FOGTransformerEncoder(state="pretrain")
 model, trainer, result = pretrain_model(PreTrainingFogModule, model, fog_train_loader, save_name="FOGTransformerEncoder", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
 result
-
-
-# In[ ]:
-
-
-# get the number of parameters in the model
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-print(f'The model has {count_parameters(FOGTransformerEncoder()):,} trainable parameters')
-print(f'The model has {count_parameters(FOGModel()):,} trainable parameters')
 
 
 # In[ ]:

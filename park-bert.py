@@ -29,9 +29,11 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 
 import pytorch_lightning as pl
+from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
 
+torch.set_float32_matmul_precision('high')
 
 # In[164]:
 
@@ -72,6 +74,7 @@ class Config:
     model_dropout = hparams["model_dropout"]
     model_hidden = hparams["model_hidden"]
     model_nblocks = hparams["model_nblocks"]
+    model_nhead = hparams["model_nhead"]
 
     lr = hparams["lr"]
     milestones = hparams["milestones"]
@@ -333,14 +336,14 @@ gc.collect()
 
 
 fog_train = FOGDataset(train_fpaths)
-fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True) #, num_workers=cfg.num_workers)
+fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True, num_workers=16)
 
 
 # In[172]:
 
 
 fog_valid = FOGDataset(valid_fpaths)
-fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
+fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size, num_workers=16)
 
 
 # In[173]:
@@ -562,29 +565,29 @@ class FOGModule(pl.LightningModule):
         preds = self.model(x)
         loss = self.loss_module(preds, y)
         acc = (preds.argmax(dim=-1) == y.argmax(dim=-1)).float().mean()
-        self.log('train_acc', acc)
+        self.log('train_acc', acc, sync_dist=True)
         
         with torch.no_grad():
             ap = self.average_precision_score(y, preds)
-        self.log('train_ap0', ap[0])
-        self.log('train_ap1', ap[1])
-        self.log('train_ap2', ap[2])
-        self.log('train_ap', sum(ap)/3)
+        self.log('train_ap0', ap[0], sync_dist=True)
+        self.log('train_ap1', ap[1], sync_dist=True)
+        self.log('train_ap2', ap[2], sync_dist=True)
+        self.log('train_ap', sum(ap)/3, sync_dist=True)
 
         # Logs the accuracy per epoch to tensorboard (weighted average over batches)
         #self.log('train_acc', acc, on_step=False, on_epoch=True)
-        self.log('train_loss', loss)
+        self.log('train_loss', loss, prog_bar=True, sync_dist=True)
         return loss  # Return tensor to call ".backward" on
 
     def on_train_epoch_end(self):
         avg_precision = self.trainer.logged_metrics['train_ap0'].nanmean()
-        self.log('train0_precision', avg_precision)
+        self.log('train0_precision', avg_precision, sync_dist=True)
         avg_precision = self.trainer.logged_metrics['train_ap1'].nanmean()
-        self.log('train1_precision', avg_precision)
+        self.log('train1_precision', avg_precision, sync_dist=True)
         avg_precision = self.trainer.logged_metrics['train_ap2'].nanmean()
-        self.log('train2_precision', avg_precision)
+        self.log('train2_precision', avg_precision, sync_dist=True)
         avg_precision = self.trainer.logged_metrics['train_ap'].nanmean()
-        self.log('avg_train_precision', avg_precision)
+        self.log('avg_train_precision', avg_precision, sync_dist=True)
 
     def validation_step(self, batch, batch_idx):
         x, y, t = batch
@@ -599,6 +602,8 @@ class FOGModule(pl.LightningModule):
             self.val_true = torch.cat((self.val_true, y), dim=0)
             self.val_pred = torch.cat((self.val_pred, preds), dim=0)
 
+        loss = self.loss_module(preds, y)
+        self.log('val_loss', loss, prog_bar=True, sync_dist=True)
         # By default logs it per epoch (weighted average over batches)
         # with torch.no_grad():
         #     ap = self.average_precision_score(future, preds)
@@ -620,12 +625,12 @@ class FOGModule(pl.LightningModule):
         # self.log('avg_val_precision', avg_precision)
 
         acc = (self.val_true.argmax(dim=-1) == self.val_pred.argmax(dim=-1)).float().mean()
-        self.log('val_acc', acc)
+        self.log('val_acc', acc, sync_dist=True)
         avg_precision = self.average_precision_score(self.val_true, self.val_pred)
-        self.log('val0_precision', avg_precision[0])
-        self.log('val1_precision', avg_precision[1])
-        self.log('val2_precision', avg_precision[2])
-        self.log('avg_val_precision', sum(avg_precision)/3)
+        self.log('val0_precision', avg_precision[0], sync_dist=True)
+        self.log('val1_precision', avg_precision[1], sync_dist=True)
+        self.log('val2_precision', avg_precision[2], sync_dist=True)
+        self.log('avg_val_precision', sum(avg_precision)/3, sync_dist=True)
         self.val_true = None
         self.val_pred = None
 
@@ -644,12 +649,12 @@ class FOGModule(pl.LightningModule):
     
     def on_test_epoch_end(self) -> None:
         acc = (self.val_true.argmax(dim=-1) == self.val_pred.argmax(dim=-1)).float().mean()
-        self.log('val_acc', acc)
+        self.log('val_acc', acc, sync_dist=True)
         avg_precision = self.average_precision_score(self.val_true, self.val_pred)
-        self.log('val0_precision', avg_precision[0])
-        self.log('val1_precision', avg_precision[1])
-        self.log('val2_precision', avg_precision[2])
-        self.log('avg_val_precision', sum(avg_precision)/3)
+        self.log('val0_precision', avg_precision[0], sync_dist=True)
+        self.log('val1_precision', avg_precision[1], sync_dist=True)
+        self.log('val2_precision', avg_precision[2], sync_dist=True)
+        self.log('avg_val_precision', sum(avg_precision)/3, sync_dist=True)
         self.val_true = None
         self.val_pred = None
     
@@ -677,6 +682,7 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
                          logger = True,
+                         strategy=DDPStrategy(find_unused_parameters=True),
                          # val_check_interval=0.5,
                          log_every_n_steps=50)                                                           
     trainer.logger._log_graph = True         # If True, we plot the computation graph in tensorboard
@@ -687,12 +693,12 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     trainer.logger.log_hyperparams(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
-    pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + "_final.pt")
-    if os.path.isfile(pretrained_filename):
+    pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + f"/{cfg.model_hidden}_{cfg.model_nblocks}_final.pt")
+    print(f"Pretrained file {pretrained_filename}")
+    if cfg.hparams["use_pretrained"] and os.path.isfile(pretrained_filename):
         print(f"Found pretrained model at {pretrained_filename}, loading...")
-        lmodel = module.load_from_checkpoint(pretrained_filename) # Automatically loads the model with the saved hyperparameters
-    else:
-        lmodel = module(model, **kwargs)
+        model.load_state_dict(torch.load(pretrained_filename)) # Automatically loads the model with the saved hyperparameters
+    lmodel = module(model, **kwargs)
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)
@@ -715,7 +721,7 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 
 model = FOGTransformerEncoder()
 model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGTransformerEncoder", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
-print(json.dumps(cfg.hparams), sort_keys=True, indent=4)
+print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 result
 
 
@@ -733,7 +739,7 @@ test_tdcsfog_paths = glob.glob(f"{cfg.DATA_DIR}test/tdcsfog/*.csv")
 test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
 
 test_dataset = FOGDataset(test_fpaths, split="test")
-test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
+test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
 
 ids = []
 preds = []
