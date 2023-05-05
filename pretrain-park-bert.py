@@ -182,20 +182,26 @@ def _block(in_features, out_features, drop_rate):
     )
 
 class FOGModel(nn.Module):
-    def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
+    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
         super(FOGModel, self).__init__()
         self.hparams = {}
+        self.state = state
         self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
         self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
-        self.out_layer = nn.Linear(dim, 3)
+
+        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_finetune = nn.Linear(dim, 3)
         
     def forward(self, x):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         for block in self.blocks:
             x = block(x)
-        x = self.out_layer(x)
+        if self.state == "pretrain":
+            x = self.out_layer_pretrain(x)
+        else:
+            x = self.out_layer_finetune(x)
         return x
 
 class FOGTransformerEncoder(nn.Module):
@@ -338,11 +344,10 @@ def pretrain_model(module, model, train_loader, save_name = None, **kwargs):
 
 
 print(f"# of devices: {torch.cuda.device_count()}")
-model = FOGTransformerEncoder(state="pretrain")
-model, trainer, result = pretrain_model(PreTrainingFogModule, model, fog_train_loader, save_name="FOGTransformerEncoder", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
+model = FOGModel(state="pretrain")
+model, trainer, result = pretrain_model(PreTrainingFogModule, model, fog_train_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
-result
 
 
 # In[ ]:

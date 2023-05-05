@@ -32,6 +32,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
+import torchmetrics
 
 torch.set_float32_matmul_precision('high')
 
@@ -88,8 +89,7 @@ class Config:
     label_list = ['StartHesitation', 'Turn', 'Walking']
 
 cfg = Config()
-cfg.num_workers
-
+print(vars(Config))
 
 # In[166]:
 
@@ -378,20 +378,26 @@ def _block(in_features, out_features, drop_rate):
     )
 
 class FOGModel(nn.Module):
-    def __init__(self, p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
+    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
         super(FOGModel, self).__init__()
         self.hparams = {}
+        self.state = state
         self.dropout = nn.Dropout(p)
         self.in_layer = nn.Linear(cfg.window_size*3, dim)
         self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
-        self.out_layer = nn.Linear(dim, 3)
+
+        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_finetune = nn.Linear(dim, 3)
         
     def forward(self, x):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         for block in self.blocks:
             x = block(x)
-        x = self.out_layer(x)
+        if self.state == "pre-train":
+            x = self.out_layer_pretrain(x)
+        else:
+            x = self.out_layer_finetune(x)
         return x
 
 class FOGTransformerEncoder(nn.Module):
@@ -527,6 +533,7 @@ class FOGModule(pl.LightningModule):
         """
         super().__init__()
         # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
+        #self.save_hyperparameters(ignore=["model"])
         self.save_hyperparameters()
         # Create model
         self.model = model
@@ -552,7 +559,6 @@ class FOGModule(pl.LightningModule):
         else:
             assert False, f"Unknown optimizer: \"{self.hparams.optimizer_name}\""
 
-        # We will reduce the learning rate by 0.1 after 100 and 150 epochs
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer, milestones=cfg.milestones, gamma=cfg.gamma)
         return [optimizer], [scheduler]
@@ -604,14 +610,7 @@ class FOGModule(pl.LightningModule):
 
         loss = self.loss_module(preds, y)
         self.log('val_loss', loss, prog_bar=True, sync_dist=True)
-        # By default logs it per epoch (weighted average over batches)
-        # with torch.no_grad():
-        #     ap = self.average_precision_score(future, preds)
-        # self.log('val_ap0', ap[0])
-        # self.log('val_ap1', ap[1])
-        # self.log('val_ap2', ap[2])
-        # self.log('val_ap', sum(ap)/3)
-        # self.log('val_ap33', sum(ap)/3, on_step=True)
+        return {'loss': loss, 'y_pred': preds, 'y': y}
     
     def on_validation_epoch_end(self):
         
@@ -640,12 +639,14 @@ class FOGModule(pl.LightningModule):
         y = y.float()
         preds = self.model(x)
  
+        loss = self.loss_module(preds, y)
         if self.val_true is None:
             self.val_true = y
             self.val_pred = preds
         else:
             self.val_true = torch.cat((self.val_true, y), dim=0)
             self.val_pred = torch.cat((self.val_pred, preds), dim=0)
+        return {'loss': loss, 'y_pred': preds, 'y': y}
     
     def on_test_epoch_end(self) -> None:
         acc = (self.val_true.argmax(dim=-1) == self.val_pred.argmax(dim=-1)).float().mean()
@@ -666,6 +667,40 @@ class FOGModule(pl.LightningModule):
 
 # In[192]:
 
+class ConfusionMatrixCallback(pl.Callback):
+    def __init__(self, num_classes, task="multiclass"):
+        super().__init__()
+        self.conf_matrix = torchmetrics.ConfusionMatrix(num_classes=num_classes, task=task).to(cfg.device)
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
+        # Get the predicted labels and ground truth labels from the batch
+        y_pred, y_true = outputs['y_pred'], outputs['y']
+
+        # Update the confusion matrix with the current batch
+        self.conf_matrix.update(y_pred, y_true)
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # Compute the confusion matrix for the entire validation set
+        matrix = self.conf_matrix.compute().detach().cpu()
+
+        # Print the confusion matrix
+        print('Confusion matrix:')
+        print(matrix)
+
+    def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
+        # Get the predicted labels and ground truth labels from the batch
+        y_pred, y_true = outputs['y_pred'], outputs['y']
+
+        # Update the confusion matrix with the current batch
+        self.conf_matrix.update(y_pred, y_true)
+
+    def on_test_end(self, trainer, pl_module):
+        # Compute the confusion matrix for the entire test set
+        matrix = self.conf_matrix.compute().detach().cpu()
+
+        # Print the confusion matrix
+        print('Confusion matrix:')
+        print(matrix)
 
 def train_model(module, model, train_loader, val_loader, test_loader, save_name = None, **kwargs):
     """
@@ -674,6 +709,7 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
         save_name (optional) - If specified, this name will be used for creating the checkpoint and logging directory.
     """
     # Create a PyTorch Lightning trainer with the generation callback
+    conf_matrix_callback = ConfusionMatrixCallback(num_classes=3, task="multiclass")
     trainer = pl.Trainer(default_root_dir=os.path.join(cfg.CHECKPOINT_PATH, save_name),                          # Where to save models
                          accelerator="gpu" if str(cfg.device).startswith("cuda") else "cpu",                     # We run on a GPU (if possible)
                          devices=torch.cuda.device_count() if str(cfg.device).startswith("cuda") else 1,         # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
@@ -683,14 +719,15 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
                          logger = True,
                          strategy=DDPStrategy(find_unused_parameters=True),
-                         # val_check_interval=0.5,
+                         val_check_interval=0.5,
                          log_every_n_steps=50)                                                           
     trainer.logger._log_graph = True         # If True, we plot the computation graph in tensorboard
     trainer.logger._default_hp_metric = True
 
     # log hyperparameters, including model and custom parameters
     model.hparams.update(cfg.hparams)
-    trainer.logger.log_hyperparams(model.hparams)
+    del model.hparams["milestones"] 
+    trainer.logger.log_metrics(model.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
     pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + f"/{cfg.model_hidden}_{cfg.model_nblocks}_final.pt")
@@ -702,6 +739,7 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)
+    print(f"Best model path {trainer.checkpoint_callback.best_model_path}")
     lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training
 
     # Test best model on validation set
@@ -719,10 +757,10 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 # In[193]:
 
 
-model = FOGTransformerEncoder()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGTransformerEncoder", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
+model = FOGModel()
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
-result
+print(json.dumps(result, sort_keys=True, indent=4))
 
 
 # ## Submission

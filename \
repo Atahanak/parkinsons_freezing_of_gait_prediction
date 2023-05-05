@@ -1,0 +1,15 @@
+{
+    "batch_size":  8192,
+    "window_size": 30,
+    "window_future": 8,
+    "wx": 1,
+    "model_dropout": 0.2,
+    "model_hidden": 768,
+    "model_nblocks": 6,
+    "model_nhead": 8,
+    "lr": 0.00015,
+    "milestones": [5, 10, 15, 20],
+    "gamma": 0.00003,
+    "num_epochs": 16,
+    "use_pretrained": false
+}
