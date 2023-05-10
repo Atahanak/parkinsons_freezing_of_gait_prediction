@@ -398,7 +398,7 @@ class FOGModel(nn.Module):
         x = self.in_layer(x)
         for block in self.blocks:
             x = block(x)
-        if self.state == "pre-train":
+        if self.state == "pretrain":
             x = self.out_layer_pretrain(x)
         else:
             x = self.out_layer_finetune(x)
@@ -449,7 +449,7 @@ class FOGPatchTST(nn.Module):
         x = self.in_layer(x)
         x = self.dropout(x+self.W_pos)
         x = self.transformer(x)
-        if self.state == "pre-train":
+        if self.state == "pretrain":
             x = self.out_layer_pretrain(x)
         else:
             x = self.out_layer_finetune(x)
