@@ -29,6 +29,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 
 import pytorch_lightning as pl
+from pytorch_lightning.tuner import Tuner
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
@@ -41,6 +42,8 @@ torch.set_float32_matmul_precision('high')
 
 from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from sklearn.metrics import average_precision_score
+
+from positional_encoding import *
 
 
 # In[165]:
@@ -189,6 +192,7 @@ class FOGDataset(Dataset):
         gc.collect()
         
     def read(self, f, _type):
+        print(f"Reading {f}...")
         df = pd.read_csv(f)
         if self.split == "test":
             return np.array(df)
@@ -416,6 +420,34 @@ class FOGTransformerEncoder(nn.Module):
     def forward(self, x):
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
+        x = self.dropout(x)
+        x = self.transformer(x)
+        if self.state == "pre-train":
+            x = self.out_layer_pretrain(x)
+        else:
+            x = self.out_layer_finetune(x)
+        return x
+
+
+class FOGPatchTST(nn.Module):
+    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks): #, num_patch=18):
+        super(FOGPatchTST, self).__init__()
+        self.hparams = {}
+        self.state = state
+        # Positional encoding
+        self.W_pos = positional_encoding("zero", True, 3, dim) 
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg.window_size*3, dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
+        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
+
+        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_finetune = nn.Linear(dim, 3)
+
+    def forward(self, x):
+        x = x.view(-1, cfg.window_size*3)
+        x = self.in_layer(x)
+        x = self.dropout(x+self.W_pos)
         x = self.transformer(x)
         if self.state == "pre-train":
             x = self.out_layer_pretrain(x)
@@ -523,18 +555,18 @@ def validation(model, criterion, valid_loader):
 
 class FOGModule(pl.LightningModule):
 
-    def __init__(self, model, optimizer_name, optimizer_hparams):
+    def __init__(self, model, optimizer_name):
         """
         Inputs:
             model_name - Name of the model to run. Used for creating the model (see function below)
             model_hparams - Hyperparameters for the model, as dictionary.
             optimizer_name - Name of the optimizer to use. Currently supported: Adam, SGD
-            optimizer_hparams - Hyperparameters for the optimizer, as dictionary. This includes learning rate, weight decay, etc.
         """
         super().__init__()
         # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
         #self.save_hyperparameters(ignore=["model"])
         self.save_hyperparameters()
+        self.lr = cfg.lr
         # Create model
         self.model = model
         # Create loss module
@@ -552,16 +584,25 @@ class FOGModule(pl.LightningModule):
         # We will support Adam or SGD as optimizers.
         if self.hparams.optimizer_name == "Adam":
             # AdamW is Adam with a correct implementation of weight decay (see here for details: https://arxiv.org/pdf/1711.05101.pdf)
-            optimizer = torch.optim.AdamW(
-                self.parameters(), **self.hparams.optimizer_hparams)
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         elif self.hparams.optimizer_name == "SGD":
-            optimizer = torch.optim.SGD(self.parameters(), **self.hparams.optimizer_hparams)
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, weight_decay=cfg.gamma)
         else:
             assert False, f"Unknown optimizer: \"{self.hparams.optimizer_name}\""
 
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=cfg.milestones, gamma=cfg.gamma)
-        return [optimizer], [scheduler]
+        #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=cfg.milestones, gamma=cfg.gamma)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=5, mode="min")
+        #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+        return {
+          "optimizer": optimizer,
+          "lr_scheduler": {
+              "scheduler": scheduler,
+              "monitor": "val_loss",
+              "interval": "epoch",
+              "frequency": 1
+          }
+        }
+        #return [optimizer], [scheduler]
 
     def training_step(self, batch, batch_idx):
         # "batch" is the output of the training data loader.
@@ -736,6 +777,16 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
         print(f"Found pretrained model at {pretrained_filename}, loading...")
         model.load_state_dict(torch.load(pretrained_filename)) # Automatically loads the model with the saved hyperparameters
     lmodel = module(model, **kwargs)
+
+    # tune learning rate
+    print("Tuning learning rate...")
+    tuner = Tuner(trainer)
+    # Run learning rate finder
+    lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    # Pick point based on plot, or get suggestion
+    new_lr = lr_finder.suggestion()
+    print(f"New learning rate: {new_lr}")
+    print("Tuning done.")
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)
@@ -757,8 +808,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 # In[193]:
 
 
-model = FOGModel()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam", optimizer_hparams={"lr": cfg.lr, "weight_decay": cfg.gamma})
+model = FOGPatchTST()
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGPatchTST", optimizer_name="Adam")
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
 
