@@ -45,207 +45,14 @@ from sklearn.metrics import average_precision_score
 
 from positional_encoding import *
 
-%load_ext watermark
-%watermark -a "Taha Atahan Akyildiz" -d -t -v -p numpy,pandas,torch,pytorch_lightning,sklearn
+from watermark import watermark
+print(watermark(packages="pytorch_lightning, torchmetrics, torch, sklearn, pandas, numpy"))
 
 
 # In[165]:
-
-
-class Config:
-    KAGGLE = False
-    ROOT_READ = '../'
-    ROOT_WRITE = '../'
-    if KAGGLE:
-        ROOT_READ = '/kaggle/input/'
-        ROOT_WRITE = '/kaggle/working/'
-    DATA_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/'
-    TRAIN_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/train/'
-    TDCSFOG_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/train/tdcsfog/'
-    DEFOG_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/train/defog/'
-    CHECKPOINT_PATH = f'{ROOT_WRITE}checkpoints/'
-    PARAMS_PATH = f'./config.json'
-    if KAGGLE:
-        PARAMS_PATH = '/' # TODO
-
-
-    with open(PARAMS_PATH) as f:
-        hparams = json.load(f)
-
-    batch_size = hparams["batch_size"]
-    window_size = hparams["window_size"]
-    window_future = hparams["window_future"]
-    window_past = window_size - window_future
-    wx = hparams["wx"]
-
-    model_dropout = hparams["model_dropout"]
-    model_hidden = hparams["model_hidden"]
-    model_nblocks = hparams["model_nblocks"]
-    model_nhead = hparams["model_nhead"]
-
-    lr = hparams["lr"]
-    milestones = hparams["milestones"]
-    gamma = hparams["gamma"]
-
-    num_epochs = hparams["num_epochs"]
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    num_workers = 32 if torch.cuda.is_available() else 1
-
-    feature_list = ['AccV', 'AccML', 'AccAP']
-    label_list = ['StartHesitation', 'Turn', 'Walking']
-
+from config import Config
 cfg = Config()
 print(vars(Config))
-
-# In[166]:
-
-
-cfg.device
-
-
-# ## Data - Preprocessing
-
-# In[167]:
-
-
-"""
-class FOGDataset(Dataset):
-    def __init__(self, fpaths, scale=9.806, test=False):
-        super(FOGDataset, self).__init__()
-        tm = time.time()
-        self.test = test
-        self.fpaths = fpaths
-        self.f_ids = [os.path.basename(f)[:-4] for f in self.fpaths]
-        self.curr_df_idx = 0
-        self.curr_row_idx = 0
-        self.dfs = [np.array(pd.read_csv(f)) for f in fpaths]
-        self.end_indices = []
-        self.scale = scale
-        
-        self.length = 0
-        for df in self.dfs:
-            self.length += df.shape[0]
-            self.end_indices.append(self.length)
-            
-        print(f"Dataset initialized in {time.time() - tm} secs!")
-        
-    def pad(self, df, time_start):
-        if df.shape[0] == cfg.window_size:
-            return df
-        
-        npad = cfg.window_size - df.shape[0]
-        padzeros = np.zeros((npad, 3))
-        if time_start <= 0:
-            df = np.concatenate((padzeros, df), axis=0)
-        else:
-            df = np.concatenate((df, padzeros), axis=0)
-        return df
-            
-    def __getitem__(self, index):
-        for i,e in enumerate(self.end_indices):
-            if index >= e:
-                continue
-            df_idx = i
-            break
-            
-        curr_df = self.dfs[i]
-        row_idx = curr_df.shape[0] - (self.end_indices[i] - index)
-        _id = self.f_ids[i] + "_" + str(row_idx)
-        
-        x = self.pad(curr_df[row_idx-cfg.window_past:row_idx+cfg.window_future, 1:4], row_idx-cfg.window_past )
-        x = torch.tensor(x)/self.scale
-        
-        if self.test == True:
-            return _id, x
-        
-        y = curr_df[row_idx, -3:].astype('float')
-        y = torch.tensor(y)
-        
-        return x, y
-    
-    def __len__(self):
-        return self.length
-"""
-class FOGDataset(Dataset):
-    def __init__(self, fpaths, scale=9.806, split="train"):
-        super(FOGDataset, self).__init__()
-        tm = time.time()
-        self.split = split
-        self.scale = scale
-        
-        self.fpaths = fpaths
-        self.dfs = [self.read(f[0], f[1]) for f in fpaths]
-        self.f_ids = [os.path.basename(f[0])[:-4] for f in self.fpaths]
-        
-        self.end_indices = []
-        self.shapes = []
-        _length = 0
-        for df in self.dfs:
-            self.shapes.append(df.shape[0])
-            _length += df.shape[0]
-            self.end_indices.append(_length)
-        
-        self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float16)
-        self.length = self.dfs.shape[0]
-        
-        shape1 = self.dfs.shape[1]
-        
-        self.dfs = np.concatenate([np.zeros((cfg.wx*cfg.window_past, shape1)), self.dfs, np.zeros((cfg.wx*cfg.window_future, shape1))], axis=0)
-        print(f"Dataset initialized in {time.time() - tm} secs!")
-        gc.collect()
-        
-    def read(self, f, _type):
-        print(f"Reading {f}...")
-        df = pd.read_csv(f)
-        if self.split == "test":
-            return np.array(df)
-        
-        if _type =="tdcs":
-            df['Valid'] = 1
-            df['Task'] = 1
-            df['tdcs'] = 1
-        else:
-            df['tdcs'] = 0
-        
-        return np.array(df)
-            
-    def __getitem__(self, index):
-        if self.split == "train":
-            row_idx = random.randint(0, self.length-1) + cfg.wx*cfg.window_past
-        elif self.split == "test":
-            for i,e in enumerate(self.end_indices):
-                if index >= e:
-                    continue
-                df_idx = i
-                break
-
-            row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
-            _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
-            row_idx = index + cfg.wx*cfg.window_past
-        else:
-            row_idx = index + cfg.wx*cfg.window_past
-            
-        #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
-        x = self.dfs[row_idx - cfg.wx*cfg.window_past : row_idx + cfg.wx*cfg.window_future, 1:4]
-        x = x[::cfg.wx, :][::-1, :]
-        x = torch.tensor(x.astype('float'))#/scale
-        
-        t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
-        
-        if self.split == "test":
-            return _id, x, t
-        
-        y = self.dfs[row_idx, 4:7].astype('float')
-        y = torch.tensor(y)
-        
-        return x, y, t
-    
-    def __len__(self):
-        return self.length
-
-
-# In[168]:
-
 
 """
 # Analysis of positive instances in each fold of our CV folds
@@ -258,7 +65,7 @@ W = []
 # I used the usual file from the competition folder, it would have been updated with the test files too.
 metadata = pd.read_csv(f"{cfg.DATA_DIR}tdcsfog_metadata.csv")
 
-for f in tqdm(metadata['Id']):
+for f in tqdm(metadata['Id']):3421113
     fpath = f"{cfg.TRAIN_DIR}tdcsfog/{f}.csv"
     df = pd.read_csv(fpath)
     
@@ -331,27 +138,21 @@ valid_fpaths_de = [f"{cfg.DATA_DIR}train/defog/{_id}.csv" for _id in valid_ids i
 
 train_fpaths = [(f, 'de') for f in train_fpaths_de] + [(f, 'tdcs') for f in train_fpaths_tdcs]
 valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
-
-
-# In[170]:
-
-
 gc.collect()
 
-
-# In[171]:
-
-
-fog_train = FOGDataset(train_fpaths)
-fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True, num_workers=16)
+from Dataset import FOGPatchDataSet
+fog_train = FOGPatchDataSet(train_fpaths, cfg)
+fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True) #, num_workers=16)
 
 
 # In[172]:
 
 
-fog_valid = FOGDataset(valid_fpaths)
-fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size, num_workers=16)
+fog_valid = FOGPatchDataSet(valid_fpaths, cfg)
+fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size) #, num_workers=16)
 
+# x = next(iter(fog_train_loader))
+# print(x[0].shape, x[1].shape)
 
 # In[173]:
 
@@ -370,196 +171,20 @@ print("Number of batches:", len(fog_valid_loader))
 print("Batch size:", fog_valid_loader.batch_size)
 print("Total size:", len(fog_valid_loader) * fog_valid_loader.batch_size)
 
-
-# ## Model
-
-# In[1]:
-
-
-def _block(in_features, out_features, drop_rate):
-    return nn.Sequential(
-        nn.Linear(in_features, out_features),
-        nn.BatchNorm1d(out_features),
-        nn.ReLU(),
-        nn.Dropout(drop_rate)
-    )
-
-class FOGModel(nn.Module):
-    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
-        super(FOGModel, self).__init__()
-        self.hparams = {}
-        self.state = state
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
-
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
-        self.out_layer_finetune = nn.Linear(dim, 3)
-        
-    def forward(self, x):
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        for block in self.blocks:
-            x = block(x)
-        if self.state == "pretrain":
-            x = self.out_layer_pretrain(x)
-        else:
-            x = self.out_layer_finetune(x)
-        return x
-
-class FOGTransformerEncoder(nn.Module):
-    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks):
-        super(FOGTransformerEncoder, self).__init__()
-        self.hparams = {}
-        self.state = state
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
-        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
-
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
-        self.out_layer_finetune = nn.Linear(dim, 3)
-
-    def forward(self, x):
-        """
-        x: (batch_size, window_size, 3)
-        """
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        x = self.dropout(x)
-        x = self.transformer(x)
-        if self.state == "pre-train":
-            x = self.out_layer_pretrain(x)
-        else:
-            x = self.out_layer_finetune(x)
-        return x
-
-
-class FOGPatchTST(nn.Module):
-    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks): #, num_patch=18):
-        super(FOGPatchTST, self).__init__()
-        self.hparams = {}
-        self.state = state
-        # Positional encoding
-        self.W_pos = positional_encoding("zero", True, 3, dim) 
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
-        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
-
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
-        self.out_layer_finetune = nn.Linear(dim, 3)
-
-    def forward(self, x):
-        """
-        x: (batch_size, window_size, 3)
-        """
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        x = torch.reshape(x, (cfg.batch_size*3, cfg.window_size, cfg.model_hidden) )
-        x = self.dropout(x+self.W_pos)
-        x = self.transformer(x)
-        if self.state == "pretrain":
-            x = self.out_layer_pretrain(x)
-        else:
-            x = self.out_layer_finetune(x)
-        return x
-
+from src.models.patchTST import PatchTST
 
 # In[190]:
-
+model = PatchTST(int(cfg.num_vars), int(cfg.num_classes), int(cfg.patch_len), int(cfg.patch_len), int(cfg.window_size / cfg.patch_len), head_type='classification')
+y = model(next(iter(fog_train_loader))[0].float())
+print("HERE", y.shape)
 
 # get the number of parameters in the model
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-print(f'The model has {count_parameters(FOGTransformerEncoder()):,} trainable parameters')
-print(f'The model has {count_parameters(FOGModel()):,} trainable parameters')
-
-
-# In[177]:
-
-
-"""
-tdcsfog_train_loader = DataLoader(tdcsfog_train, batch_size=cfg.batch_size, shuffle=True)
-
-model = FOGModel()
-optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-criterion = nn.BCEWithLogitsLoss()
-soft = nn.Softmax(dim=-1)
-
-# def average_precision_score(y_true, y_pred):
-#         # average precision with pytorch
-#         y = y_true.argmax(dim=-1)
-#         average_precision = AveragePrecision(task="multiclass", num_classes=3, average=None)
-#         return average_precision(y_pred, y)
-
-def train(model, optimizer, criterion, train_loader):
-    for x, y in tqdm(train_loader):
-        # print(y)
-        # print(x.shape, y.shape)
-        #ic(x, y)
-        # single forward pass
-        # cast x to the correct data type
-        x = x.float()
-        y_hat = model(x)
-        print(y_hat)
-        # print(soft(y_hat))
-        # print(y_hat.shape)
-        # print(y_hat.argmax(dim=-1))
-        # calculate loss
-        loss = criterion(y_hat, y)
-        acc = (y_hat.argmax(dim=-1) == y.argmax(dim=-1)).float().mean()
-        # calculate gradients
-        loss.backward()
-        # update weights
-        optimizer.step()
-        # print out the loss using ic
-        #print(loss.item())
-        #print(acc.item())
-        print(y)
-
-        with torch.no_grad():
-            print(average_precision_score(y, y_hat, average=None))
-            print(multiclass_average_precision(y_hat, y.argmax(-1), num_classes=3, average=None))
-        break
-
-def validation(model, criterion, valid_loader):
-    lol = []
-    lil = []
-    c = 0
-    for x, y in tqdm(valid_loader):
-        # single forward pass
-        # cast x to the correct data type
-        x = x.float()
-        # disable gradient calculation
-        with torch.no_grad():
-            y_hat = model(x)
-        print(y_hat)
-        #print(y_hat.argmax(dim=-1))
-        print(y)
-        lil = lil + y_hat.tolist()
-        lol = lol + y.tolist()
-        #print(y.argmax(dim=-1))
-
-        # calculate loss
-        loss = criterion(y_hat, y)
-        acc = (lil.argmax(dim=-1) == lol.argmax(dim=-1)).float().mean()
-        # print out the loss using ic
-        #print(loss.item())
-        #print(acc.item())
-        print(average_precision_score(y, y_hat, average=None))
-        print(multiclass_average_precision(y_hat, y.argmax(-1), num_classes=3, average=None))
-        c += 1
-        if c == 3:
-            break
-    print(lil)
-    print(lol)
-"""
-
+print(f'The model has {count_parameters(model):,} trainable parameters')
 
 # ## Fine - Tuning
-
 # In[191]:
 
 
@@ -582,7 +207,7 @@ class FOGModule(pl.LightningModule):
         # Create loss module
         self.loss_module = nn.BCEWithLogitsLoss()
         # Example input for visualizing the graph in Tensorboard
-        self.example_input_array = torch.zeros((1, cfg.window_size, 3), dtype=torch.float32)
+        self.example_input_array = torch.zeros((int(cfg.batch_size), int(cfg.window_size/cfg.patch_len), 3, int(cfg.patch_len)), dtype=torch.float32)
         self.val_true = None
         self.val_pred = None
 
@@ -776,9 +401,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     trainer.logger._default_hp_metric = True
 
     # log hyperparameters, including model and custom parameters
-    model.hparams.update(cfg.hparams)
-    del model.hparams["milestones"] 
-    trainer.logger.log_metrics(model.hparams)
+    del cfg.hparams["milestones"] 
+    trainer.logger.log_metrics(cfg.hparams)
 
     # Check whether pretrained model exists. If yes, load it and skip training
     pretrained_filename = os.path.join(cfg.CHECKPOINT_PATH, save_name + f"/{cfg.model_hidden}_{cfg.model_nblocks}_final.pt")
@@ -789,14 +413,14 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     lmodel = module(model, **kwargs)
 
     # tune learning rate
-    print("Tuning learning rate...")
-    tuner = Tuner(trainer)
-    # Run learning rate finder
-    lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
-    # Pick point based on plot, or get suggestion
-    new_lr = lr_finder.suggestion()
-    print(f"New learning rate: {new_lr}")
-    print("Tuning done.")
+    # print("Tuning learning rate...")
+    # tuner = Tuner(trainer)
+    # # Run learning rate finder
+    # lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    # # Pick point based on plot, or get suggestion
+    # new_lr = lr_finder.suggestion()
+    # print(f"New learning rate: {new_lr}")
+    # print("Tuning done.")
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)
@@ -818,7 +442,6 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 # In[193]:
 
 
-model = FOGPatchTST()
 model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGPatchTST", optimizer_name="Adam")
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
@@ -837,8 +460,8 @@ test_defog_paths = glob.glob(f"{cfg.DATA_DIR}test/defog/*.csv")
 test_tdcsfog_paths = glob.glob(f"{cfg.DATA_DIR}test/tdcsfog/*.csv")
 test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
 
-test_dataset = FOGDataset(test_fpaths, split="test")
-test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+test_dataset = FOGPatchDataSet(test_fpaths, cfg, split="test")
+test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
 
 ids = []
 preds = []
