@@ -30,6 +30,7 @@ import torch.nn.functional as F
 
 import pytorch_lightning as pl
 from pytorch_lightning.tuner import Tuner
+from pytorch_lightning.plugins import MixedPrecisionPlugin 
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
@@ -44,9 +45,6 @@ from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from sklearn.metrics import average_precision_score
 
 from positional_encoding import *
-
-%load_ext watermark
-%watermark -a "Taha Atahan Akyildiz" -d -t -v -p numpy,pandas,torch,pytorch_lightning,sklearn
 
 
 # In[165]:
@@ -401,7 +399,7 @@ class FOGModel(nn.Module):
         x = self.in_layer(x)
         for block in self.blocks:
             x = block(x)
-        if self.state == "pretrain":
+        if self.state == "pre-train":
             x = self.out_layer_pretrain(x)
         else:
             x = self.out_layer_finetune(x)
@@ -421,9 +419,6 @@ class FOGTransformerEncoder(nn.Module):
         self.out_layer_finetune = nn.Linear(dim, 3)
 
     def forward(self, x):
-        """
-        x: (batch_size, window_size, 3)
-        """
         x = x.view(-1, cfg.window_size*3)
         x = self.in_layer(x)
         x = self.dropout(x)
@@ -433,38 +428,6 @@ class FOGTransformerEncoder(nn.Module):
         else:
             x = self.out_layer_finetune(x)
         return x
-
-
-class FOGPatchTST(nn.Module):
-    def __init__(self, state="finetune", p=cfg.model_dropout, dim=cfg.model_hidden, nblocks=cfg.model_nblocks): #, num_patch=18):
-        super(FOGPatchTST, self).__init__()
-        self.hparams = {}
-        self.state = state
-        # Positional encoding
-        self.W_pos = positional_encoding("zero", True, 3, dim) 
-        self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
-        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
-
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
-        self.out_layer_finetune = nn.Linear(dim, 3)
-
-    def forward(self, x):
-        """
-        x: (batch_size, window_size, 3)
-        """
-        x = x.view(-1, cfg.window_size*3)
-        x = self.in_layer(x)
-        x = torch.reshape(x, (cfg.batch_size*3, cfg.window_size, cfg.model_hidden) )
-        x = self.dropout(x+self.W_pos)
-        x = self.transformer(x)
-        if self.state == "pretrain":
-            x = self.out_layer_pretrain(x)
-        else:
-            x = self.out_layer_finetune(x)
-        return x
-
 
 # In[190]:
 
@@ -580,7 +543,7 @@ class FOGModule(pl.LightningModule):
         # Create model
         self.model = model
         # Create loss module
-        self.loss_module = nn.BCEWithLogitsLoss()
+        self.loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
         # Example input for visualizing the graph in Tensorboard
         self.example_input_array = torch.zeros((1, cfg.window_size, 3), dtype=torch.float32)
         self.val_true = None
@@ -715,9 +678,31 @@ class FOGModule(pl.LightningModule):
         return multiclass_average_precision(y_pred, target, num_classes=3, average=None)
         
 
+# In[192]:
+
+# open events.csv file read it and store it in a dataframe
+loss_weights = []
+with open(f"{cfg.DATA_DIR}/events.csv") as file:
+    df = pd.read_csv(file)
+    # create a new dataframe column by take the difference between begin and end columns
+    df['duration'] = df['Completion'] - df['Init']
+    # take the mean of the duration column
+    mean = df['duration'].mean()
+    print(df)
+    # create a new dataframe by grouping each task according to their mean duration and also count 
+    df = df.groupby('Type').agg({'duration': ['sum', 'count']})
+    # sort dt by mean duration
+    df = df.sort_values(by=[('duration', 'sum')], ascending=False)
+    # get numpy array of duration sum inversely scaled between 0 and 1
+    counts = df[('duration', 'sum')].values
+    loss_weights = 1 - (counts / counts.sum()) # inverse scale
+    #loss_weights = 1 / counts # inverse scale
+    #loss_weights = loss_weights / loss_weights.sum() * 3
+    print("Loss wieghts: ", loss_weights, loss_weights.sum())
 
 # In[192]:
 
+import torchvision
 class ConfusionMatrixCallback(pl.Callback):
     def __init__(self, num_classes, task="multiclass"):
         super().__init__()
@@ -725,7 +710,7 @@ class ConfusionMatrixCallback(pl.Callback):
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         # Get the predicted labels and ground truth labels from the batch
-        y_pred, y_true = outputs['y_pred'], outputs['y']
+        y_pred, y_true = outputs['y_pred'].argmax(dim=-1), outputs['y'].argmax(dim=-1)
 
         # Update the confusion matrix with the current batch
         self.conf_matrix.update(y_pred, y_true)
@@ -740,7 +725,7 @@ class ConfusionMatrixCallback(pl.Callback):
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         # Get the predicted labels and ground truth labels from the batch
-        y_pred, y_true = outputs['y_pred'], outputs['y']
+        y_pred, y_true = outputs['y_pred'].argmax(dim=-1), outputs['y'].argmax(dim=-1)
 
         # Update the confusion matrix with the current batch
         self.conf_matrix.update(y_pred, y_true)
@@ -748,6 +733,10 @@ class ConfusionMatrixCallback(pl.Callback):
     def on_test_end(self, trainer, pl_module):
         # Compute the confusion matrix for the entire test set
         matrix = self.conf_matrix.compute().detach().cpu()
+        #convert the confusion matrix to a tensor and add it to TensorBoard
+        #conf_matrix = torch.from_numpy(matrix).float()
+        conf_matrix = torchvision.utils.make_grid(matrix.float().unsqueeze(0), normalize=True, scale_each=True)
+        trainer.logger.experiment.add_image('Confusion matrix', conf_matrix)
 
         # Print the confusion matrix
         print('Confusion matrix:')
@@ -762,10 +751,12 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     # Create a PyTorch Lightning trainer with the generation callback
     conf_matrix_callback = ConfusionMatrixCallback(num_classes=3, task="multiclass")
     trainer = pl.Trainer(default_root_dir=os.path.join(cfg.CHECKPOINT_PATH, save_name),                          # Where to save models
+                         plugins=[MixedPrecisionPlugin(precision="bf16-mixed", device="cuda")],
                          accelerator="gpu" if str(cfg.device).startswith("cuda") else "cpu",                     # We run on a GPU (if possible)
                          devices=torch.cuda.device_count() if str(cfg.device).startswith("cuda") else 1,         # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
                          max_epochs=cfg.num_epochs,                                                                     # How many epochs to train for if no patience is set
                          callbacks=[ModelCheckpoint(save_weights_only=True, mode="max", monitor="avg_val_precision"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+                                    conf_matrix_callback,
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
                          logger = True,
@@ -818,8 +809,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
 # In[193]:
 
 
-model = FOGPatchTST()
-model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGPatchTST", optimizer_name="Adam")
+model = FOGModel()
+model, trainer, result = train_model(FOGModule, model, fog_train_loader, fog_valid_loader, fog_valid_loader, save_name="FOGModel", optimizer_name="Adam")
 print(json.dumps(cfg.hparams, sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
 

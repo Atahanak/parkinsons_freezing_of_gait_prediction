@@ -32,6 +32,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.tuner import Tuner
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.plugins import MixedPrecisionPlugin 
 from torchmetrics.functional.classification import multiclass_average_precision
 import torchmetrics
 
@@ -142,14 +143,14 @@ gc.collect()
 
 from Dataset import FOGPatchDataSet
 fog_train = FOGPatchDataSet(train_fpaths, cfg)
-fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True) #, num_workers=16)
+fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True, num_workers=16)
 
 
 # In[172]:
 
 
 fog_valid = FOGPatchDataSet(valid_fpaths, cfg)
-fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size) #, num_workers=16)
+fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size, num_workers=16)
 
 # x = next(iter(fog_train_loader))
 # print(x[0].shape, x[1].shape)
@@ -174,7 +175,7 @@ print("Total size:", len(fog_valid_loader) * fog_valid_loader.batch_size)
 from src.models.patchTST import PatchTST
 
 # In[190]:
-model = PatchTST(int(cfg.num_vars), int(cfg.num_classes), int(cfg.patch_len), int(cfg.patch_len), int(cfg.window_size / cfg.patch_len), head_type='classification')
+model = PatchTST(int(cfg.num_vars), int(cfg.num_classes), int(cfg.patch_len), int(cfg.patch_len), int(cfg.window_size / cfg.patch_len), head_type='classification', d_model=512)
 y = model(next(iter(fog_train_loader))[0].float())
 print("HERE", y.shape)
 
@@ -205,7 +206,7 @@ class FOGModule(pl.LightningModule):
         # Create model
         self.model = model
         # Create loss module
-        self.loss_module = nn.BCEWithLogitsLoss()
+        self.loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
         # Example input for visualizing the graph in Tensorboard
         self.example_input_array = torch.zeros((int(cfg.batch_size), int(cfg.window_size/cfg.patch_len), 3, int(cfg.patch_len)), dtype=torch.float32)
         self.val_true = None
@@ -235,7 +236,7 @@ class FOGModule(pl.LightningModule):
               "monitor": "val_loss",
               "interval": "epoch",
               "frequency": 1
-          }
+          },
         }
         #return [optimizer], [scheduler]
 
@@ -341,8 +342,30 @@ class FOGModule(pl.LightningModule):
         
 
 
+
+# open events.csv file read it and store it in a dataframe
+loss_weights = []
+with open(f"{cfg.DATA_DIR}/events.csv") as file:
+    df = pd.read_csv(file)
+    # create a new dataframe column by take the difference between begin and end columns
+    df['duration'] = df['Completion'] - df['Init']
+    # take the mean of the duration column
+    mean = df['duration'].mean()
+    print(df)
+    # create a new dataframe by grouping each task according to their mean duration and also count 
+    df = df.groupby('Type').agg({'duration': ['sum', 'count']})
+    # sort dt by mean duration
+    df = df.sort_values(by=[('duration', 'sum')], ascending=False)
+    # get numpy array of duration sum inversely scaled between 0 and 1
+    counts = df[('duration', 'sum')].values
+    loss_weights = 1 - (counts / counts.sum()) # inverse scale
+    #loss_weights = 1 / counts # inverse scale
+    #loss_weights = loss_weights / loss_weights.sum() * 3
+    print("Loss wieghts: ", loss_weights, loss_weights.sum())
+
 # In[192]:
 
+import torchvision
 class ConfusionMatrixCallback(pl.Callback):
     def __init__(self, num_classes, task="multiclass"):
         super().__init__()
@@ -350,7 +373,7 @@ class ConfusionMatrixCallback(pl.Callback):
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         # Get the predicted labels and ground truth labels from the batch
-        y_pred, y_true = outputs['y_pred'], outputs['y']
+        y_pred, y_true = outputs['y_pred'].argmax(dim=-1), outputs['y'].argmax(dim=-1)
 
         # Update the confusion matrix with the current batch
         self.conf_matrix.update(y_pred, y_true)
@@ -365,7 +388,7 @@ class ConfusionMatrixCallback(pl.Callback):
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         # Get the predicted labels and ground truth labels from the batch
-        y_pred, y_true = outputs['y_pred'], outputs['y']
+        y_pred, y_true = outputs['y_pred'].argmax(dim=-1), outputs['y'].argmax(dim=-1)
 
         # Update the confusion matrix with the current batch
         self.conf_matrix.update(y_pred, y_true)
@@ -373,6 +396,10 @@ class ConfusionMatrixCallback(pl.Callback):
     def on_test_end(self, trainer, pl_module):
         # Compute the confusion matrix for the entire test set
         matrix = self.conf_matrix.compute().detach().cpu()
+        #convert the confusion matrix to a tensor and add it to TensorBoard
+        #conf_matrix = torch.from_numpy(matrix).float()
+        conf_matrix = torchvision.utils.make_grid(conf_matrix.float().unsqueeze(0), normalize=True, scale_each=True)
+        trainer.logger.experiment.add_image('Confusion matrix', conf_matrix)
 
         # Print the confusion matrix
         print('Confusion matrix:')
@@ -387,15 +414,17 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     # Create a PyTorch Lightning trainer with the generation callback
     conf_matrix_callback = ConfusionMatrixCallback(num_classes=3, task="multiclass")
     trainer = pl.Trainer(default_root_dir=os.path.join(cfg.CHECKPOINT_PATH, save_name),                          # Where to save models
+                         plugins=[MixedPrecisionPlugin(precision="bf16-mixed", device="cuda")],
                          accelerator="gpu" if str(cfg.device).startswith("cuda") else "cpu",                     # We run on a GPU (if possible)
                          devices=torch.cuda.device_count() if str(cfg.device).startswith("cuda") else 1,         # How many GPUs/CPUs we want to use (1 is enough for the notebooks)
                          max_epochs=cfg.num_epochs,                                                                     # How many epochs to train for if no patience is set
                          callbacks=[ModelCheckpoint(save_weights_only=True, mode="max", monitor="avg_val_precision"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+                          conf_matrix_callback,
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
                          logger = True,
                          strategy=DDPStrategy(find_unused_parameters=True),
-                         val_check_interval=0.5,
+                         #val_check_interval=0.5,
                          log_every_n_steps=50)                                                           
     trainer.logger._log_graph = True         # If True, we plot the computation graph in tensorboard
     trainer.logger._default_hp_metric = True
@@ -413,14 +442,16 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     lmodel = module(model, **kwargs)
 
     # tune learning rate
-    # print("Tuning learning rate...")
-    # tuner = Tuner(trainer)
-    # # Run learning rate finder
-    # lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
-    # # Pick point based on plot, or get suggestion
-    # new_lr = lr_finder.suggestion()
-    # print(f"New learning rate: {new_lr}")
-    # print("Tuning done.")
+    print("Tuning learning rate...")
+    tuner = Tuner(trainer)
+    # Run learning rate finder
+    lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    # Auto-scale batch size with binary search
+    #tuner.scale_batch_size(lmodel, mode="binsearch")
+    # Pick point based on plot, or get suggestion
+    new_lr = lr_finder.suggestion()
+    print(f"New learning rate: {new_lr}")
+    print("Tuning done.")
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)
@@ -461,7 +492,7 @@ test_tdcsfog_paths = glob.glob(f"{cfg.DATA_DIR}test/tdcsfog/*.csv")
 test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
 
 test_dataset = FOGPatchDataSet(test_fpaths, cfg, split="test")
-test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
+test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
 
 ids = []
 preds = []

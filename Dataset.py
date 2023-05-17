@@ -71,7 +71,7 @@ class FOGDataset(Dataset):
 """
 
 class FOGPatchDataSet(Dataset):
-  def __init__(self, fpaths, cfg, scale=9, split='train'):
+  def __init__(self, fpaths, cfg, scale=9, split='train', task='pretrain'):
     super(FOGPatchDataSet).__init__()
     tm = time.time()
     self.cfg = cfg
