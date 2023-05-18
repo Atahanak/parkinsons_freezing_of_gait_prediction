@@ -1,4 +1,4 @@
-__all__ = ['FOGPatchDataSet', 'FOGFinetuneDataset', 'FOGPretrainDataset']
+__all__ = ['FOGPatchDataSet', 'FOGDataset', 'FOGFinetuneDataset', 'FOGPretrainDataset']
 
 import os
 import gc
@@ -227,6 +227,97 @@ class FOGFinetuneDataset(Dataset):
         
         return x, y, t
     
+    def __len__(self):
+        return self.length
+
+class FOGDataset(Dataset):
+    def __init__(self, fpaths, cfg, scale=9.806, split="train", state="finetune"):
+        super(FOGDataset, self).__init__()
+        tm = time.time()
+        self.split = split
+        self.state = state
+        self.scale = scale
+        self.cfg = cfg
+        
+        self.fpaths = fpaths
+        self.dfs = [self.read(f[0], f[1]) for f in fpaths]
+        self.f_ids = [os.path.basename(f[0])[:-4] for f in self.fpaths]
+        
+        self.end_indices = []
+        self.shapes = []
+        _length = 0
+        for df in self.dfs:
+            self.shapes.append(df.shape[0])
+            _length += df.shape[0]
+            self.end_indices.append(_length)
+        
+        self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float16)
+        self.length = self.dfs.shape[0]
+        
+        shape1 = self.dfs.shape[1]
+        
+        if state == "pretrain":
+          self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((2*self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+        elif state == "finetune":
+          self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+        print(f"Dataset initialized in {time.time() - tm} secs!")
+        gc.collect()
+        
+    def read(self, f, _type):
+        print(f"Reading file {f}...")
+        if self.state == "pretrain":
+            df = pd.read_parquet(f)
+        elif self.state == "finetune": 
+            df = pd.read_csv(f)
+            
+        if self.split == "test" or self.state == "pretrain":
+            return np.array(df)
+        
+        if _type =="tdcs":
+            df['Valid'] = 1
+            df['Task'] = 1
+            df['tdcs'] = 1
+        else:
+            df['tdcs'] = 0
+        
+        return np.array(df)
+            
+    def __getitem__(self, index):
+        if self.split == "train":
+            row_idx = random.randint(0, self.length-1) + self.cfg.wx*self.cfg.window_past
+        elif self.split == "test":
+            for i,e in enumerate(self.end_indices):
+                if index >= e:
+                    continue
+                df_idx = i
+                break
+
+            row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
+            _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
+            row_idx = index + self.cfg.wx*self.cfg.window_past
+        else:
+            row_idx = index + self.cfg.wx*self.cfg.window_past
+
+        #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
+        x = self.dfs[row_idx - self.cfg.wx*self.cfg.window_past : row_idx + self.cfg.wx*self.cfg.window_future, 1:4]
+        x = x[::self.cfg.wx, :][::-1, :]
+        x = torch.tensor(x.astype('float'))
+        
+        t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
+
+        if self.split == "test":
+            return _id, x, t
+        
+        if self.state == "pretrain":
+          y = self.dfs[row_idx + self.cfg.wx*self.cfg.window_future : row_idx + 2*self.cfg.wx*self.cfg.window_future, 1:4]
+          y = y[::self.cfg.wx, :][::-1, :]
+          y = torch.tensor(y.astype('float'))
+        elif self.state == "finetune":
+          y = self.dfs[row_idx, 4:7].astype('float')
+          y = torch.tensor(y)
+          
+        return x, y, t
+
     def __len__(self):
         return self.length
 

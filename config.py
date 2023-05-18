@@ -15,7 +15,8 @@ class Config:
     TDCSFOG_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/train/tdcsfog/'
     DEFOG_DIR = f'{ROOT_READ}tlvmc-parkinsons-freezing-gait-prediction/train/defog/'
     CHECKPOINT_PATH = f'{ROOT_WRITE}checkpoints/'
-    PARAMS_PATH = f'./config.json'
+    PARAMS_PATH = f'./configs/config.json'
+
     if KAGGLE:
         PARAMS_PATH = '/' # TODO
 
