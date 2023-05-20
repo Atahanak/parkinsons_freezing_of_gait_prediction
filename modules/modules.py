@@ -1,3 +1,5 @@
+__all__ = ['FOGModule', 'FOGPreTrainModule']
+
 import pytorch_lightning as pl
 import torch
 from torchmetrics.functional.classification import multiclass_average_precision
@@ -17,13 +19,13 @@ class FOGModule(pl.LightningModule):
         # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
         #self.save_hyperparameters(ignore=["model"])
         self.save_hyperparameters()
-        self.lr = cfg.lr
+        self.lr = cfg['lr']
         # Create model
         self.model = model
         # Create loss module
         self.loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
         # Example input for visualizing the graph in Tensorboard
-        self.example_input_array = torch.zeros((1, cfg.window_size, 3), dtype=torch.float32)
+        self.example_input_array = torch.zeros((1, cfg['window_size'], 3), dtype=torch.float32)
         self.val_true = None
         self.val_pred = None
 
@@ -37,7 +39,7 @@ class FOGModule(pl.LightningModule):
             # AdamW is Adam with a correct implementation of weight decay (see here for details: https://arxiv.org/pdf/1711.05101.pdf)
             optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         elif self.hparams.optimizer_name == "SGD":
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, weight_decay=self.cfg.gamma)
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, weight_decay=self.cfg['gamma'])
         else:
             assert False, f"Unknown optimizer: \"{self.hparams.optimizer_name}\""
 
@@ -145,3 +147,31 @@ class FOGModule(pl.LightningModule):
         target = y_true.argmax(dim=-1)
         return multiclass_average_precision(y_pred, target, num_classes=3, average=None)
         
+class FOGPreTrainModule(pl.LightningModule):
+    def __init__(self, cfg, model, optimizer_name, optimizer_hparams):
+        super(FOGPreTrainModule, self).__init__()
+        self.cfg = cfg
+        # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
+        self.save_hyperparameters()
+        # Example input for visualizing the graph in Tensorboard
+        self.example_input_array = torch.zeros((1, cfg['window_size'], 3), dtype=torch.float32)
+
+        self.model = model
+        self.criterion = nn.MSELoss()
+        
+    def forward(self, x):
+        return self.model(x)
+    
+    def training_step(self, batch, batch_idx):
+        x, y, _ = batch
+        x = x.float()
+        y = y.float()
+        y_hat = self.model(x)
+        y = y.view(y.shape[0], -1)
+        loss = self.criterion(y_hat, y)
+        self.log('train_loss', loss)
+        return loss
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), **self.hparams.optimizer_hparams)
+        return optimizer

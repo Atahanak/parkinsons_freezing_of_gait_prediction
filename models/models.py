@@ -1,3 +1,5 @@
+__all__ = ['FOGModel', 'FOGTransformerEncoder']
+
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
@@ -14,20 +16,20 @@ class FOGModel(nn.Module):
     def __init__(self, cfg, state="finetune"):
         super(FOGModel, self).__init__()
         self.cfg = cfg
-        p = cfg.model_dropout
-        dim=cfg.model_hidden
-        nblocks=cfg.model_nblocks
+        p = cfg['model_dropout']
+        dim=cfg['model_hidden']
+        nblocks=cfg['model_nblocks']
         self.hparams = {}
         self.state = state
         self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
+        self.in_layer = nn.Linear(cfg['window_size']*3, dim)
         self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
 
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_pretrain = nn.Linear(dim, cfg['window_future'] * 3)
         self.out_layer_finetune = nn.Linear(dim, 3)
         
     def forward(self, x):
-        x = x.view(-1, self.cfg.window_size*3)
+        x = x.view(-1, self.cfg['window_size']*3)
         x = self.in_layer(x)
         for block in self.blocks:
             x = block(x)
@@ -41,21 +43,21 @@ class FOGTransformerEncoder(nn.Module):
     def __init__(self, cfg, state="finetune"):
         super(FOGTransformerEncoder, self).__init__()
         self.cfg = cfg
-        p = cfg.model_dropout
-        dim=cfg.model_hidden
-        nblocks=cfg.model_nblocks
+        p = cfg['model_dropout']
+        dim=cfg['model_hidden']
+        nblocks=cfg['model_nblocks']
         self.hparams = {}
         self.state = state
         self.dropout = nn.Dropout(p)
-        self.in_layer = nn.Linear(cfg.window_size*3, dim)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg.model_nhead, dim_feedforward=dim)
+        self.in_layer = nn.Linear(cfg['window_size']*3, dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg['model_nhead'], dim_feedforward=dim)
         self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
 
-        self.out_layer_pretrain = nn.Linear(dim, cfg.window_future * 3)
+        self.out_layer_pretrain = nn.Linear(dim, cfg['window_future'] * 3)
         self.out_layer_finetune = nn.Linear(dim, 3)
 
     def forward(self, x):
-        x = x.view(-1, self.cfg.window_size*3)
+        x = x.view(-1, self.cfg['window_size']*3)
         x = self.in_layer(x)
         x = self.dropout(x)
         x = self.transformer(x)

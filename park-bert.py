@@ -35,133 +35,36 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from torchmetrics.functional.classification import multiclass_average_precision
 import torchmetrics
-
 torch.set_float32_matmul_precision('high')
 
-# In[164]:
+from watermark import watermark
+print(watermark(packages="pytorch_lightning, torchmetrics, torch, sklearn, pandas, numpy"))
 
-from sklearn.model_selection import train_test_split, StratifiedGroupKFold
-from sklearn.metrics import average_precision_score
-
-# In[165]:
 from config import Config
-cfg = Config()
+cfg = Config(file_name='config')
 print(vars(Config))
 
-"""
-# Analysis of positive instances in each fold of our CV folds
-
-SH = []
-T = []
-W = []
-
-# Here I am using the metadata file available during training. Since the code will run again during submission, if 
-# I used the usual file from the competition folder, it would have been updated with the test files too.
-metadata = pd.read_csv(f"{cfg.DATA_DIR}tdcsfog_metadata.csv")
-
-for f in tqdm(metadata['Id']):
-    fpath = f"{cfg.TRAIN_DIR}tdcsfog/{f}.csv"
-    df = pd.read_csv(fpath)
-    
-    SH.append(np.sum(df['StartHesitation']))
-    T.append(np.sum(df['Turn']))
-    W.append(np.sum(df['Walking']))
-
-metadata['SH'] = SH
-metadata['T'] = T
-metadata['W'] = W
-
-sgkf = StratifiedGroupKFold(n_splits=5, random_state=42, shuffle=True)
-for i, (train_index, valid_index) in enumerate(sgkf.split(X=metadata['Id'], y=[1]*len(metadata), groups=metadata['Subject'])):
-    print(f"Fold = {i}")
-    train_ids = metadata.loc[train_index, 'Id']
-    valid_ids = metadata.loc[valid_index, 'Id']
-    
-    print(f"Length of Train = {len(train_ids)}, Length of trainid = {len(valid_index)}")
-    n1_sum = metadata.loc[train_index, 'SH'].sum()
-    n2_sum = metadata.loc[train_index, 'T'].sum()
-    n3_sum = metadata.loc[train_index, 'W'].sum()
-    print(f"Train classes: {n1_sum:,}, {n2_sum:,}, {n3_sum:,}")
-    
-    n1_sum = metadata.loc[valid_index, 'SH'].sum()
-    n2_sum = metadata.loc[valid_index, 'T'].sum()
-    n3_sum = metadata.loc[valid_index, 'W'].sum()
-    print(f"Valid classes: {n1_sum:,}, {n2_sum:,}, {n3_sum:,}")
-    
-# # FOLD 2 is the most well balanced
-"""
-
-
-# In[169]:
-
-
-# The actual train-test split (based on Fold 2)
-
-metadata = pd.read_csv(f"{cfg.DATA_DIR}tdcsfog_metadata.csv")
-sgkf = StratifiedGroupKFold(n_splits=5, random_state=42, shuffle=True)
-for i, (train_index, valid_index) in enumerate(sgkf.split(X=metadata['Id'], y=[1]*len(metadata), groups=metadata['Subject'])):
-    if i != 2:
-        continue
-    print(f"Fold = {i}")
-    train_ids = metadata.loc[train_index, 'Id']
-    valid_ids = metadata.loc[valid_index, 'Id']
-    print(f"Length of Train = {len(train_ids)}, Length of Valid = {len(valid_ids)}")
-    
-    if i == 2:
-        break
-        
-train_fpaths_tdcs = [f"{cfg.DATA_DIR}train/tdcsfog/{_id}.csv" for _id in train_ids if os.path.exists(f"{cfg.DATA_DIR}train/tdcsfog/{_id}.csv")]
-valid_fpaths_tdcs = [f"{cfg.DATA_DIR}train/tdcsfog/{_id}.csv" for _id in valid_ids if os.path.exists(f"{cfg.DATA_DIR}train/tdcsfog/{_id}.csv")]
-
-
-metadata = pd.read_csv(f"{cfg.DATA_DIR}defog_metadata.csv")
-sgkf = StratifiedGroupKFold(n_splits=5, random_state=42, shuffle=True)
-for i, (train_index, valid_index) in enumerate(sgkf.split(X=metadata['Id'], y=[1]*len(metadata), groups=metadata['Subject'])):
-    if i != 2:
-        continue
-    print(f"Fold = {i}")
-    train_ids = metadata.loc[train_index, 'Id']
-    valid_ids = metadata.loc[valid_index, 'Id']
-    print(f"Length of Train = {len(train_ids)}, Length of Valid = {len(valid_ids)}")
-    
-    if i == 2:
-        break
-        
-train_fpaths_de = [f"{cfg.DATA_DIR}train/defog/{_id}.csv" for _id in train_ids if os.path.exists(f"{cfg.DATA_DIR}train/defog/{_id}.csv")]
-valid_fpaths_de = [f"{cfg.DATA_DIR}train/defog/{_id}.csv" for _id in valid_ids if os.path.exists(f"{cfg.DATA_DIR}train/defog/{_id}.csv")]
-
+from utils import *
+#split_analysis(cfg, 'tdcsfog')
+train_fpaths_tdcs, valid_fpaths_tdcs = split_data(cfg, 'tdcsfog', 2)
+#split_analysis(cfg, 'defog')
+train_fpaths_de, valid_fpaths_de = split_data(cfg, 'defog', 2)
 train_fpaths = [(f, 'de') for f in train_fpaths_de] + [(f, 'tdcs') for f in train_fpaths_tdcs]
 valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
-
-
-# In[170]:
-
-
 gc.collect()
 
-
-# In[171]:
 from dataset.Dataset import FOGDataset
 
 fog_train = FOGDataset(train_fpaths, cfg)
-fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size, shuffle=True, num_workers=16)
-
-
-# In[172]:
-
+fog_train_loader = DataLoader(fog_train, batch_size=cfg.batch_size) #, shuffle=True, num_workers=16)
 
 fog_valid = FOGDataset(valid_fpaths, cfg)
-fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size, num_workers=16)
-
-# In[173]:
-
+fog_valid_loader = DataLoader(fog_valid, batch_size=cfg.batch_size)# , num_workers=16)
 
 print("Dataset size:", fog_train.__len__())
 print("Number of batches:", len(fog_train_loader))
 print("Batch size:", fog_train_loader.batch_size)
 print("Total size:", len(fog_train_loader) * fog_train_loader.batch_size)
-
-# In[174]:
 
 print("Dataset size:", fog_valid.__len__())
 print("Number of batches:", len(fog_valid_loader))
@@ -288,7 +191,7 @@ test_tdcsfog_paths = glob.glob(f"{cfg.DATA_DIR}test/tdcsfog/*.csv")
 test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
 
 test_dataset = FOGDataset(test_fpaths, split="test")
-test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size) #, num_workers=cfg.num_workers)
 
 ids = []
 preds = []

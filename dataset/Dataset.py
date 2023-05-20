@@ -95,7 +95,7 @@ class FOGPatchDataSet(Dataset):
     
     shape1 = self.dfs.shape[1]
     
-    self.dfs = np.concatenate([np.zeros((cfg.wx*cfg.window_past, shape1)), self.dfs, np.zeros((cfg.wx*cfg.window_future, shape1))], axis=0)
+    self.dfs = np.concatenate([np.zeros((cfg['wx']*cfg['window_past'], shape1)), self.dfs, np.zeros((cfg['wx']*cfg['window_future'], shape1))], axis=0)
     print(f"Dataset initialized in {time.time() - tm} secs!")
     gc.collect()
 
@@ -116,7 +116,7 @@ class FOGPatchDataSet(Dataset):
 
   def __getitem__(self, index):
     if self.split == "train":
-        row_idx = random.randint(0, self.length-1) + self.cfg.wx*self.cfg.window_past
+        row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
     elif self.split == "test":
         for i,e in enumerate(self.end_indices):
             if index >= e:
@@ -126,16 +126,16 @@ class FOGPatchDataSet(Dataset):
 
         row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
         _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
-        row_idx = index + self.cfg.wx*self.cfg.window_past
+        row_idx = index + self.cfg['wx']*self.cfg['window_past']
     else:
-        row_idx = index + self.cfg.wx*self.cfg.window_past
+        row_idx = index + self.cfg['wx']*self.cfg['window_past']
         
     #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
-    x = self.dfs[row_idx - self.cfg.wx*self.cfg.window_past : row_idx + self.cfg.wx*self.cfg.window_future, 1:4]
-    x = x[::self.cfg.wx, :][::-1, :]
+    x = self.dfs[row_idx - self.cfg['wx']*self.cfg['window_past'] : row_idx + self.cfg['wx']*self.cfg['window_future'], 1:4]
+    x = x[::self.cfg['wx'], :][::-1, :]
     #print('DEBUG', x.shape, x.shape[0])
-    num_patch = x.shape[0] // (self.cfg.patch_len)
-    x = x.reshape(num_patch, 3, self.cfg.patch_len)
+    num_patch = x.shape[0] // (self.cfg['patch_len'])
+    x = x.reshape(num_patch, 3, self.cfg['patch_len'])
     x = torch.tensor(x.astype('float'))#/scale
     #print('DEBUG', x.shape, x.shape[0])
 
@@ -177,7 +177,7 @@ class FOGFinetuneDataset(Dataset):
         
         shape1 = self.dfs.shape[1]
         
-        self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+        self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
         print(f"Dataset initialized in {time.time() - tm} secs!")
         gc.collect()
         
@@ -198,7 +198,7 @@ class FOGFinetuneDataset(Dataset):
             
     def __getitem__(self, index):
         if self.split == "train":
-            row_idx = random.randint(0, self.length-1) + self.cfg.wx*self.cfg.window_past
+            row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
         elif self.split == "test":
             for i,e in enumerate(self.end_indices):
                 if index >= e:
@@ -208,13 +208,13 @@ class FOGFinetuneDataset(Dataset):
 
             row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
             _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
         else:
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
             
         #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
-        x = self.dfs[row_idx - self.cfg.wx*self.cfg.window_past : row_idx + self.cfg.wx*self.cfg.window_future, 1:4]
-        x = x[::self.cfg.wx, :][::-1, :]
+        x = self.dfs[row_idx - self.cfg['wx']*self.cfg['window_past'] : row_idx + self.cfg['wx']*self.cfg['window_future'], 1:4]
+        x = x[::self.cfg['wx'], :][::-1, :]
         x = torch.tensor(x.astype('float'))#/scale
         
         t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
@@ -257,9 +257,9 @@ class FOGDataset(Dataset):
         shape1 = self.dfs.shape[1]
         
         if state == "pretrain":
-          self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((2*self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+          self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((2*self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
         elif state == "finetune":
-          self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+          self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
         print(f"Dataset initialized in {time.time() - tm} secs!")
         gc.collect()
         
@@ -284,7 +284,7 @@ class FOGDataset(Dataset):
             
     def __getitem__(self, index):
         if self.split == "train":
-            row_idx = random.randint(0, self.length-1) + self.cfg.wx*self.cfg.window_past
+            row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
         elif self.split == "test":
             for i,e in enumerate(self.end_indices):
                 if index >= e:
@@ -294,12 +294,12 @@ class FOGDataset(Dataset):
 
             row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
             _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
         else:
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
 
         #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
-        x = self.dfs[row_idx - self.cfg.wx*self.cfg.window_past : row_idx + self.cfg.wx*self.cfg.window_future, 1:4]
+        x = self.dfs[row_idx - self.cfg['wx']*self.cfg['window_past'] : row_idx + self.cfg['wx']*self.cfg['window_future'], 1:4]
         x = x[::self.cfg.wx, :][::-1, :]
         x = torch.tensor(x.astype('float'))
         
@@ -309,8 +309,8 @@ class FOGDataset(Dataset):
             return _id, x, t
         
         if self.state == "pretrain":
-          y = self.dfs[row_idx + self.cfg.wx*self.cfg.window_future : row_idx + 2*self.cfg.wx*self.cfg.window_future, 1:4]
-          y = y[::self.cfg.wx, :][::-1, :]
+          y = self.dfs[row_idx + self.cfg['wx']*self.cfg['window_future'] : row_idx + 2*self.cfg['wx']*self.cfg['window_future'], 1:4]
+          y = y[::self.cfg['wx'], :][::-1, :]
           y = torch.tensor(y.astype('float'))
         elif self.state == "finetune":
           y = self.dfs[row_idx, 4:7].astype('float')
@@ -322,12 +322,13 @@ class FOGDataset(Dataset):
         return self.length
 
 class FOGPretrainDataset(Dataset):
-    def __init__(self, fpaths, scale=9.806, split="train", state="fine-tune"):
+    def __init__(self, cfg, fpaths, scale=9.806, split="train", state="fine-tune"):
         super(FOGPretrainDataset, self).__init__()
         tm = time.time()
         self.split = split
         self.state = state
         self.scale = scale
+        self.cgf = cfg
         
         self.fpaths = fpaths
         self.dfs = [self.read(f[0], f[1]) for f in fpaths]
@@ -347,7 +348,7 @@ class FOGPretrainDataset(Dataset):
         
         shape1 = self.dfs.shape[1]
         
-        self.dfs = np.concatenate([np.zeros((self.cfg.wx*self.cfg.window_past, shape1)), self.dfs, np.zeros((2*self.cfg.wx*self.cfg.window_future, shape1))], axis=0)
+        self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((2*self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
         print(f"Dataset initialized in {time.time() - tm} secs!")
         gc.collect()
         
@@ -372,7 +373,7 @@ class FOGPretrainDataset(Dataset):
             
     def __getitem__(self, index):
         if self.split == "train":
-            row_idx = random.randint(0, self.length-1) + self.cfg.wx*self.cfg.window_past
+            row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
         elif self.split == "test":
             for i,e in enumerate(self.end_indices):
                 if index >= e:
@@ -382,19 +383,19 @@ class FOGPretrainDataset(Dataset):
 
             row_idx_true = self.shapes[df_idx] - (self.end_indices[df_idx] - index)
             _id = self.f_ids[df_idx] + "_" + str(row_idx_true)
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
         else:
-            row_idx = index + self.cfg.wx*self.cfg.window_past
+            row_idx = index + self.cfg['wx']*self.cfg['window_past']
 
         #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
-        x = self.dfs[row_idx - self.cfg.wx*self.cfg.window_past : row_idx + self.cfg.wx*self.cfg.window_future, 1:4]
-        x = x[::self.cfg.wx, :][::-1, :]
+        x = self.dfs[row_idx - self.cfg['wx']*self.cfg['window_past'] : row_idx + self.cfg['wx']*self.cfg['window_future'], 1:4]
+        x = x[::self.cfg['wx'], :][::-1, :]
         x = torch.tensor(x.astype('float'))
         
         t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
         
-        y = self.dfs[row_idx + self.cfg.wx*self.cfg.window_future : row_idx + 2*self.cfg.wx*self.cfg.window_future, 1:4]
-        y = y[::self.cfg.wx, :][::-1, :]
+        y = self.dfs[row_idx + self.cfg['wx']*self.cfg['window_future'] : row_idx + 2*self.cfg['wx']*self.cfg['window_future'], 1:4]
+        y = y[::self.cfg['wx'], :][::-1, :]
         y = torch.tensor(y.astype('float'))
         return x, y, t
 

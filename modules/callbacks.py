@@ -1,3 +1,5 @@
+__all__ = ['ConfusionMatrixCallback']
+
 import pytorch_lightning as pl
 import torchvision
 import torchmetrics
@@ -6,7 +8,7 @@ class ConfusionMatrixCallback(pl.Callback):
     def __init__(self, cfg, num_classes, task="multiclass"):
         super().__init__()
         self.cfg = cfg
-        self.conf_matrix = torchmetrics.ConfusionMatrix(num_classes=num_classes, task=task).to(cfg.device)
+        self.conf_matrix = torchmetrics.ConfusionMatrix(num_classes=num_classes, task=task).to(cfg['device'])
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         # Get the predicted labels and ground truth labels from the batch
