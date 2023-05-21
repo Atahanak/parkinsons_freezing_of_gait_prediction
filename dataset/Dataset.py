@@ -300,7 +300,7 @@ class FOGDataset(Dataset):
 
         #scale = 9.806 if self.dfs[row_idx, -1] == 1 else 1.0
         x = self.dfs[row_idx - self.cfg['wx']*self.cfg['window_past'] : row_idx + self.cfg['wx']*self.cfg['window_future'], 1:4]
-        x = x[::self.cfg.wx, :][::-1, :]
+        x = x[::self.cfg['wx'], :][::-1, :]
         x = torch.tensor(x.astype('float'))
         
         t = self.dfs[row_idx, -3]*self.dfs[row_idx, -2]
@@ -322,7 +322,7 @@ class FOGDataset(Dataset):
         return self.length
 
 class FOGPretrainDataset(Dataset):
-    def __init__(self, cfg, fpaths, scale=9.806, split="train", state="fine-tune"):
+    def __init__(self, cfg, fpaths, scale=9.806, split="train", state="finetune"):
         super(FOGPretrainDataset, self).__init__()
         tm = time.time()
         self.split = split

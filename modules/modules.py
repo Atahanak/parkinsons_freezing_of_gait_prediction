@@ -25,7 +25,7 @@ class FOGModule(pl.LightningModule):
         # Create loss module
         self.loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
         # Example input for visualizing the graph in Tensorboard
-        self.example_input_array = torch.zeros((1, cfg['window_size'], 3), dtype=torch.float32)
+        #self.example_input_array = torch.zeros((1, 1, cfg['window_size'], 3), dtype=torch.float32)
         self.val_true = None
         self.val_pred = None
 
@@ -154,7 +154,7 @@ class FOGPreTrainModule(pl.LightningModule):
         # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
         self.save_hyperparameters()
         # Example input for visualizing the graph in Tensorboard
-        self.example_input_array = torch.zeros((1, cfg['window_size'], 3), dtype=torch.float32)
+        #self.example_input_array = torch.zeros((1, cfg['window_size'], 3), dtype=torch.float32)
 
         self.model = model
         self.criterion = nn.MSELoss()
