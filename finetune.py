@@ -178,6 +178,7 @@ model.eval()
 test_defog_paths = glob.glob(f"{cfg['DATA_DIR']}test/defog/*.csv")
 test_tdcsfog_paths = glob.glob(f"{cfg['DATA_DIR']}test/tdcsfog/*.csv")
 test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
+print(f'test len: {len(test_fpaths)}')
 
 test_dataset = FOGPatchDataSet(test_fpaths, cfg, split="test")
 test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size']) #, num_workers=cfg['num_workers'])
