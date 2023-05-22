@@ -156,9 +156,8 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     val_result = trainer.test(lmodel, val_loader, verbose=False)
     result = {
                 "val_ap": val_result[0]["avg_val_precision"],
-                "SH": val_result[0]["val0_precision"],
-                "T": val_result[0]["val1_precision"],
-                "W": val_result[0]["val2_precision"]
+                "no": val_result[0]["val0_precision"],
+                "yes": val_result[0]["val1_precision"],
             }
 
     return lmodel, trainer, result
@@ -168,39 +167,39 @@ print(json.dumps(cfg['hparams'], sort_keys=True, indent=4))
 print(json.dumps(result, sort_keys=True, indent=4))
 
 
-# ## Submission
-model = FOGEventSeperatorModule.load_from_checkpoint(trainer.checkpoint_callback.best_model_path)
-model.to(cfg['device'])
-model.eval()
+# # ## Submission
+# model = FOGEventSeperatorModule.load_from_checkpoint(trainer.checkpoint_callback.best_model_path)
+# model.to(cfg['device'])
+# model.eval()
 
-test_defog_paths = glob.glob(f"{cfg['DATA_DIR']}test/defog/*.csv")
-test_tdcsfog_paths = glob.glob(f"{cfg['DATA_DIR']}test/tdcsfog/*.csv")
-test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
+# test_defog_paths = glob.glob(f"{cfg['DATA_DIR']}test/defog/*.csv")
+# test_tdcsfog_paths = glob.glob(f"{cfg['DATA_DIR']}test/tdcsfog/*.csv")
+# test_fpaths = [(f, 'de') for f in test_defog_paths] + [(f, 'tdcs') for f in test_tdcsfog_paths]
 
-test_dataset = FOGDataset(test_fpaths, cfg, split="test")
-test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size']) #, num_workers=cfg['num_workers'])
+# test_dataset = FOGDataset(test_fpaths, cfg, split="test")
+# test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size']) #, num_workers=cfg['num_workers'])
 
-ids = []
-preds = []
+# ids = []
+# preds = []
 
-for _id, x, _ in tqdm(test_loader):
-    x = x.to(cfg['device']).float()
-    with torch.no_grad():
-        y_pred = model(x)*0.1
+# for _id, x, _ in tqdm(test_loader):
+#     x = x.to(cfg['device']).float()
+#     with torch.no_grad():
+#         y_pred = model(x)*0.1
 
-    ids.extend(_id)
-    preds.extend(list(np.nan_to_num(y_pred.cpu().numpy())))
+#     ids.extend(_id)
+#     preds.extend(list(np.nan_to_num(y_pred.cpu().numpy())))
 
-sample_submission = pd.read_csv(f"{cfg['DATA_DIR']}sample_submission.csv")
-print(sample_submission.shape)
+# sample_submission = pd.read_csv(f"{cfg['DATA_DIR']}sample_submission.csv")
+# print(sample_submission.shape)
 
-preds = np.array(preds)
-submission = pd.DataFrame({'Id': ids, 'StartHesitation': np.round(preds[:,0],5), \
-                           'Turn': np.round(preds[:,1],5), 'Walking': np.round(preds[:,2],5)})
+# preds = np.array(preds)
+# submission = pd.DataFrame({'Id': ids, 'StartHesitation': np.round(preds[:,0],5), \
+#                            'Turn': np.round(preds[:,1],5), 'Walking': np.round(preds[:,2],5)})
 
-submission = pd.merge(sample_submission[['Id']], submission, how='left', on='Id').fillna(0.0)
-submission.to_csv(f"submission.csv", index=False)
+# submission = pd.merge(sample_submission[['Id']], submission, how='left', on='Id').fillna(0.0)
+# submission.to_csv(f"submission.csv", index=False)
 
-print(submission.shape)
-submission.head()
+# print(submission.shape)
+# submission.head()
 
