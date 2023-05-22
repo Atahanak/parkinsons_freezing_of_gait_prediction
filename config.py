@@ -58,6 +58,11 @@ class Config:
         if 'patch_len' in hparams:
             self.data["patch_len"] = hparams["patch_len"]
 
+        self.data["eventsep_model_dropout"] = hparams["model_dropout"]
+        self.data["eventsep_model_hidden"] = hparams["model_hidden"]
+        self.data["eventsep_model_nblocks"] = hparams["model_nblocks"]
+        self.data["eventsep_model_nhead"] = hparams["model_nhead"]
+
     def __getitem__(self, key):
         return self.data[key]
 

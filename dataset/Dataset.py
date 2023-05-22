@@ -280,6 +280,11 @@ class FOGDataset(Dataset):
         else:
             df['tdcs'] = 0
         
+        if _type == 'notype':
+            df['notype'] = 1
+        else:
+            df['notype'] = 0
+        
         return np.array(df)
             
     def __getitem__(self, index):
@@ -313,8 +318,11 @@ class FOGDataset(Dataset):
           y = y[::self.cfg['wx'], :][::-1, :]
           y = torch.tensor(y.astype('float'))
         elif self.state == "finetune":
-          y = self.dfs[row_idx, 4:7].astype('float')
-          y = torch.tensor(y)
+        #   if self._type == "notype":
+        #     y = self.dfs[row_idx, 4:5].astype('float')
+        #   else:
+            y = self.dfs[row_idx, 4:7]
+            y = torch.tensor(y.astype('float'))
           
         return x, y, t
 
@@ -354,12 +362,12 @@ class FOGPretrainDataset(Dataset):
         
     def read(self, f, _type):
         print(f"Reading file {f}...")
-        if self.state == "pre-train":
+        if self.state == "pretrain":
             df = pd.read_parquet(f)
-        elif self.state == "fine-tune": 
+        elif self.state == "finetune": 
             df = pd.read_csv(f)
             
-        if self.split == "test" or self.state == "pre-train":
+        if self.split == "test" or self.state == "pretrain":
             return np.array(df)
         
         if _type =="tdcs":
