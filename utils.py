@@ -64,6 +64,23 @@ def split_analysis(cfg, folder_name):
         
     # # FOLD 2 is the most well balanced
 
+import glob
+def event_analysis(cfg, folder_name):
+    files = glob.glob(f"{cfg['TRAIN_DIR']}{folder_name}/*.csv")
+    events = []
+    for f in files:
+        df = pd.read_csv(f)
+        # get the number of rows in the dataframe
+        rows = len(df.index)
+        # produce a list of sum of the columns 5, 6, 7
+        event = df.iloc[:, 5:8].sum().values
+        events.append((rows, sum(event)))
+    total = np.array(events).sum(axis=0)
+    print(f"Total {folder_name} events: {total}")
+    #convert to tuple
+    return total
+
+
 # get the number of parameters in the model
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

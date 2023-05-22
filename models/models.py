@@ -66,3 +66,24 @@ class FOGTransformerEncoder(nn.Module):
         else:
             x = self.out_layer_finetune(x)
         return x
+
+class FOGEventSeperator(nn.Module):
+    def __init__(self, cfg):
+        super(FOGEventSeperator, self).__init__()
+        self.cfg = cfg
+        p = cfg['eventsep_model_dropout']
+        dim=cfg['eventsep_model_hidden']
+        nblocks=cfg['eventsep_model_nblocks']
+        self.hparams = {}
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg['window_size']*3, dim)
+        self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
+        self.out_layer = nn.Linear(dim, 2)
+    
+    def forward(self, x):
+        x = x.view(-1, self.cfg['window_size']*3)
+        x = self.in_layer(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.out_layer(x)
+        return x
