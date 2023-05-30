@@ -6,3 +6,4 @@ pretrain-config.json
 submission.csv
 __pycache__/
 configs/
+p.py

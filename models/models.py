@@ -12,6 +12,33 @@ def _block(in_features, out_features, drop_rate):
         nn.Dropout(drop_rate)
     )
 
+class FOGForecastHead(nn.Module):
+    def __init__(self, cfg, dim):
+        super(FOGForecastHead, self).__init__()
+        self.out_layer = nn.Linear(dim, cfg['window_future'] * 3)
+
+    def forward(self, x):
+        x = self.out_layer(x)
+        return x
+    
+class FOGClassifierHead(nn.Module):
+    def __init__(self, cfg, dim):
+        super(FOGClassifierHead, self).__init__()
+        self.out_layer = nn.Linear(dim, 3)
+
+    def forward(self, x):
+        x = self.out_layer(x)
+        return x
+
+class FOGSeperatorHead(nn.Module):
+    def __init__(self, cfg, dim):
+        super(FOGSeperatorHead, self).__init__()
+        self.out_layer = nn.Linear(dim, 2)
+
+    def forward(self, x):
+        x = self.out_layer(x)
+        return x
+
 class FOGModel(nn.Module):
     def __init__(self, cfg, state="finetune"):
         super(FOGModel, self).__init__()
@@ -99,30 +126,21 @@ class FOGCNNEventSeperator(nn.Module):
         self.padding = 1
         self.dropout = nn.Dropout(p)
         #self.in_layer = nn.Linear(cfg['window_size']*3, dim)
-        self.in_layer = self.cnn_block(cfg['window_size'], self.dim)
+        self.in_layer = self.conv_block(cfg['window_size'], self.dim)
         self.blocks = nn.Sequential(*[_block(self.dim, self.dim, p) for _ in range(nblocks)])
         self.out_layer = nn.Linear(self.dim, 2)
 
-    def cnn_block(self, in_features, out_features):
-        H_out = ((self.cfg['window_size'] + 2*self.padding - 3) / 1) + 1
-        W_out = ((3 + 2*self.padding - 3) / 1) + 1
-
-        H_pool_out = H_out / 3
-        W_pool_out = W_out / 3
-
-        features_shape = out_features * H_pool_out * W_pool_out
-
-
+    def conv_block(self, in_features, out_features):
         return nn.Sequential(
             nn.Conv1d(in_features, out_features, kernel_size=3, stride=1, padding=self.padding),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Linear(int(features_shape), self.dim)
+            nn.MaxPool1d(kernel_size=3, stride=2)
         )
     
     def forward(self, x):
-        #x = x.view(-1, self.cfg['window_size']*3)
         x = self.in_layer(x)
+        # merge the first and third dimension
+        x = x.view(-1, self.dim)
         for block in self.blocks:
             x = block(x)
         x = self.out_layer(x)
