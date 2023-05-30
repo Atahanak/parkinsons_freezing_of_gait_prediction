@@ -231,7 +231,7 @@ class FOGEventSeperatorModule(pl.LightningModule):
         # "batch" is the output of the training data loader.
         x, y, t = batch
         x = x.float()
-        y = torch.tensor([[0, 1] if sum(a) else [1, 0] for a in y])
+        y = torch.tensor([[0, 1] if sum(a) else [1, 0] for a in y]).to(self.cfg['device'])
         y = y.float()
         
         preds = self.model(x)
@@ -262,7 +262,7 @@ class FOGEventSeperatorModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y, t = batch
         x = x.float()
-        y = torch.tensor([[0, 1] if sum(a) else [1, 0] for a in y])
+        y = torch.tensor([[0, 1] if sum(a) else [1, 0] for a in y]).to(self.cfg['device'])
         y = y.float()
         # convert yo to one_hot if y[x] == 1
 
@@ -292,7 +292,7 @@ class FOGEventSeperatorModule(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y, t = batch
         x = x.float()
-        y = [[0, 1] if sum(a) else [1, 0] for a in y]
+        y = torch.tensor([[0, 1] if sum(a) else [1, 0] for a in y]).to(self.cfg['device'])
         y = y.float()
         preds = self.model(x)
  
