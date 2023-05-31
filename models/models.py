@@ -1,8 +1,7 @@
-__all__ = ['FOGModel', 'FOGTransformerEncoder', 'FOGEventSeperator', 'FOGCNNEventSeperator']
+__all__ = ['FOGModel', 'FOGTransformerEncoder', 'FOGEventSeperator', 
+           'FOGCNNEventSeperator', 'CNN']
 
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
 
 def _block(in_features, out_features, drop_rate):
     return nn.Sequential(
@@ -12,31 +11,32 @@ def _block(in_features, out_features, drop_rate):
         nn.Dropout(drop_rate)
     )
 
-class FOGForecastHead(nn.Module):
-    def __init__(self, cfg, dim):
-        super(FOGForecastHead, self).__init__()
-        self.out_layer = nn.Linear(dim, cfg['window_future'] * 3)
-
-    def forward(self, x):
-        x = self.out_layer(x)
-        return x
+def _conv_block(in_features, out_features):
+    return nn.Sequential(
+        nn.Conv1d(in_features, out_features, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(),
+        nn.MaxPool1d(kernel_size=3, stride=2)
+    )
     
-class FOGClassifierHead(nn.Module):
-    def __init__(self, cfg, dim):
-        super(FOGClassifierHead, self).__init__()
-        self.out_layer = nn.Linear(dim, 3)
-
+class CNN(nn.Module):
+    def __init__(self, cfg):
+        super(CNN, self).__init__()
+        self.cfg = cfg
+        p = cfg['model_dropout']
+        self.dim=cfg['model_hidden']
+        nblocks=cfg['model_nblocks']
+        self.padding = 1 #cfg['padding']
+        self.dropout = nn.Dropout(p)
+        
+        # TODO parameterize the number of convolutional layers
+        self.conv_layer = _conv_block(cfg['window_size'], self.dim)
+        self.MLP = nn.Sequential(*[_block(self.dim, self.dim, p) for _ in range(nblocks)])
+    
     def forward(self, x):
-        x = self.out_layer(x)
-        return x
-
-class FOGSeperatorHead(nn.Module):
-    def __init__(self, cfg, dim):
-        super(FOGSeperatorHead, self).__init__()
-        self.out_layer = nn.Linear(dim, 2)
-
-    def forward(self, x):
-        x = self.out_layer(x)
+        x = self.conv_layer(x)
+        x = x.view(-1, self.dim)
+        for block in self.MLP:
+            x = block(x)
         return x
 
 class FOGModel(nn.Module):
@@ -126,16 +126,9 @@ class FOGCNNEventSeperator(nn.Module):
         self.padding = 1
         self.dropout = nn.Dropout(p)
         #self.in_layer = nn.Linear(cfg['window_size']*3, dim)
-        self.in_layer = self.conv_block(cfg['window_size'], self.dim)
+        self.in_layer = _conv_block(cfg['window_size'], self.dim)
         self.blocks = nn.Sequential(*[_block(self.dim, self.dim, p) for _ in range(nblocks)])
         self.out_layer = nn.Linear(self.dim, 2)
-
-    def conv_block(self, in_features, out_features):
-        return nn.Sequential(
-            nn.Conv1d(in_features, out_features, kernel_size=3, stride=1, padding=self.padding),
-            nn.ReLU(),
-            nn.MaxPool1d(kernel_size=3, stride=2)
-        )
     
     def forward(self, x):
         x = self.in_layer(x)

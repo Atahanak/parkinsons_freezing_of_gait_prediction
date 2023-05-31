@@ -231,11 +231,12 @@ class FOGFinetuneDataset(Dataset):
         return self.length
 
 class FOGDataset(Dataset):
-    def __init__(self, fpaths, cfg, scale=9.806, split="train", state="finetune"):
+    def __init__(self, fpaths, cfg, scale=9.806, split="train", state="finetune", task='classify'):
         super(FOGDataset, self).__init__()
         tm = time.time()
         self.split = split
         self.state = state
+        self.task = task
         self.scale = scale
         self.cfg = cfg
         
@@ -315,6 +316,8 @@ class FOGDataset(Dataset):
         elif self.state == "finetune":
           y = self.dfs[row_idx, 4:7].astype('float')
           y = torch.tensor(y)
+          if self.task == 'seperate':
+            y = torch.tensor([0, 1] if sum(y) else [1, 0])  
           
         return x, y, t
 
