@@ -67,7 +67,7 @@ train_fpaths = [(f, 'tdcs') for f in train_fpaths_tdcs]
 train_fpaths_2 = [(f, 'notype') for f in train_fpaths_no]
 # train_fpaths = [(f, 'notype') for f in train_fpaths_no]
 #valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
-valid_fpaths = [(f, 'tdcs') for f in train_fpaths_tdcs] 
+valid_fpaths = [(f, 'tdcs') for f in valid_fpaths_tdcs] 
 #valid_fpaths = [(f, 'de') for f in valid_fpaths_de] 
 
 gc.collect()
@@ -127,7 +127,7 @@ def train_model(module, model, head, train_loaders, val_loader, test_loader, sav
                                     LearningRateMonitor("epoch")],                                           # Log learning rate every epoch
                          enable_progress_bar=True,                                                          # Set to False if you do not want a progress bar
                          logger = True,
-                         strategy=DDPStrategy(find_unused_parameters=True),
+                         #strategy=DDPStrategy(find_unused_parameters=True),
                          #val_check_interval=0.5,
                          log_every_n_steps=50)                                                           
     trainer.logger._log_graph = True         # If True, we plot the computation graph in tensorboard
@@ -144,13 +144,13 @@ def train_model(module, model, head, train_loaders, val_loader, test_loader, sav
         print(f"Found pretrained model at {pretrained_filename}, loading...")
         model.load_state_dict(torch.load(pretrained_filename)) # Automatically loads the model with the saved hyperparameters
     loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
-    lmodel = module(cfg, model, head, loss_module)
+    lmodel = module(cfg, model, head, loss_module, fog_train, fog_valid)
 
     # tune learning rate
     print("Tuning learning rate...")
     tuner = Tuner(trainer)
     # Run learning rate finder
-    lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loaders[0], val_dataloaders=val_loader)
+    lr_finder = tuner.lr_find(lmodel) #, train_dataloaders=train_loaders[0], val_dataloaders=val_loader)
     # Auto-scale batch size with binary search
     #tuner.scale_batch_size(lmodel, mode="binsearch")
     # Pick point based on plot, or get suggestion
@@ -159,7 +159,7 @@ def train_model(module, model, head, train_loaders, val_loader, test_loader, sav
     print("Tuning done.")
     
     pl.seed_everything(42) # To be reproducable
-    trainer.fit(lmodel, train_loaders[0], val_loader)
+    trainer.fit(lmodel) #, train_loaders[0], val_loader)
     #trainer.fit(lmodel, train_loaders[1], val_loader)
     print(f"Best model path {trainer.checkpoint_callback.best_model_path}")
     lmodel = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path) # Load best checkpoint after training

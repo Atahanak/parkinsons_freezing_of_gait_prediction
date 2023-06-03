@@ -4,21 +4,26 @@ import pytorch_lightning as pl
 import torch
 from torchmetrics.functional.classification import multiclass_average_precision
 import torch.nn as nn
+from torch.utils.data import DataLoader
 
 class FOGFinetuneModule(pl.LightningModule):
 
-    def __init__(self, cfg, model, head, loss_module):
+    def __init__(self, cfg, model, head, loss_module, train_dataset, valid_dataset):
         """
                 Generic module for training a model with a head.
         """
 
         super().__init__()
         self.cfg = cfg
+        self.batch_size = cfg['batch_size']
         self.save_hyperparameters()
         self.lr = cfg['lr']
         self.model = model
         self.head = head
         self.loss_module = loss_module
+        self.train_dataset = train_dataset
+        self.valid_dataset = valid_dataset
+        self.num_workers = 4*torch.cuda.device_count() if str(self.cfg['device']).startswith("cuda") else 4
 
         self.val_true = None
         self.val_pred = None
@@ -127,6 +132,16 @@ class FOGFinetuneModule(pl.LightningModule):
     def average_precision_score(self, y_true, y_pred):
         target = y_true.argmax(dim=-1)
         return multiclass_average_precision(y_pred, target, num_classes=self.head.num_classes, average=None)
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+
+    def val_dataloader(self):
+        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+    
+    def test_dataloader(self):
+        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+
 class FOGModule(pl.LightningModule):
 
     def __init__(self, cfg, model, loss_weights, optimizer_name):
