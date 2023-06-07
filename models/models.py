@@ -11,11 +11,11 @@ def _block(in_features, out_features, drop_rate):
         nn.Dropout(drop_rate)
     )
 
-def _conv_block(in_features, out_features):
+def _conv_block(in_features, out_features, kernel_size=3, stride=1, padding=1, pool_size=3, pool_stride=2):
     return nn.Sequential(
-        nn.Conv1d(in_features, out_features, kernel_size=3, stride=1, padding=1),
+        nn.Conv1d(in_features, out_features, kernel_size=kernel_size, stride=stride, padding=padding),
         nn.ReLU(),
-        nn.MaxPool1d(kernel_size=3, stride=2)
+        nn.MaxPool1d(kernel_size=pool_size, stride=pool_stride)
     )
     
 class CNN(nn.Module):
