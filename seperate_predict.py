@@ -69,7 +69,7 @@ if __name__ == '__main__':
     train_fpaths_2 = [(f, 'notype') for f in train_fpaths_no]
     # train_fpaths = [(f, 'notype') for f in train_fpaths_no]
     #valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
-    valid_fpaths = [(f, 'tdcs') for f in train_fpaths_tdcs] 
+    valid_fpaths = [(f, 'tdcs') for f in valid_fpaths_tdcs] 
     #valid_fpaths = [(f, 'de') for f in valid_fpaths_de] 
 
     gc.collect()
@@ -87,8 +87,8 @@ if __name__ == '__main__':
     print("VALID")
     print("Dataset size:", fog_valid.__len__())
 
-    from models.models import CNN
-    model = CNN(cfg)
+    from models.models import MLP  as Seperator
+    model = Seperator(cfg)
     from models.heads import SeperatorHead
     head = SeperatorHead(cfg['model_hidden'])
     print(f'The model has {count_parameters(model):,} trainable parameters')
@@ -192,6 +192,8 @@ if __name__ == '__main__':
         loss_weights = loss_weights / loss_weights.sum() * 3
         print("Loss weights: ", loss_weights, loss_weights.sum())
 
+    from models.models import TransformerEncoder as Learner
+    model = Learner(cfg)
     from models.heads import ClassifierHead
     head = ClassifierHead(cfg['num_classes'], cfg['model_hidden'])
     classifier_model, trainer_classifier, val_result = train_model(FOGFinetuneModule, model, head, fog_valid, fog_train, save_name="FOGEventSeperator", optimizer_name="Adam")

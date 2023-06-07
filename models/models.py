@@ -1,5 +1,5 @@
 __all__ = ['FOGModel', 'FOGTransformerEncoder', 'FOGEventSeperator', 
-           'FOGCNNEventSeperator', 'CNN']
+           'FOGCNNEventSeperator', 'CNN', 'MLP', 'TransformerEncoder']
 
 import torch.nn as nn
 
@@ -37,6 +37,47 @@ class CNN(nn.Module):
         x = x.view(-1, self.dim)
         for block in self.MLP:
             x = block(x)
+        return x
+
+class MLP(nn.Module):
+    def __init__(self, cfg, state="finetune"):
+        super(MLP, self).__init__()
+        self.cfg = cfg
+        p = cfg['model_dropout']
+        dim=cfg['model_hidden']
+        nblocks=cfg['model_nblocks']
+        self.hparams = {}
+        self.state = state
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg['window_size']*3, dim)
+        self.blocks = nn.Sequential(*[_block(dim, dim, p) for _ in range(nblocks)])
+        
+    def forward(self, x):
+        x = x.view(-1, self.cfg['window_size']*3)
+        x = self.in_layer(x)
+        for block in self.blocks:
+            x = block(x)
+        return x
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, cfg, state="finetune"):
+        super(TransformerEncoder, self).__init__()
+        self.cfg = cfg
+        p = cfg['model_dropout']
+        dim=cfg['model_hidden']
+        nblocks=cfg['model_nblocks']
+        self.hparams = {}
+        self.state = state
+        self.dropout = nn.Dropout(p)
+        self.in_layer = nn.Linear(cfg['window_size']*3, dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=cfg['model_nhead'], dim_feedforward=dim)
+        self.transformer = nn.TransformerEncoder(self.encoder_layer, num_layers=nblocks, mask_check=False)
+
+    def forward(self, x):
+        x = x.view(-1, self.cfg['window_size']*3)
+        x = self.in_layer(x)
+        x = self.dropout(x)
+        x = self.transformer(x)
         return x
 
 class FOGModel(nn.Module):
