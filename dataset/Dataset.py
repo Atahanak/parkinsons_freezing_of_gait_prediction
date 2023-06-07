@@ -261,6 +261,15 @@ class FOGDataset(Dataset):
           self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((2*self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
         elif state == "finetune":
           self.dfs = np.concatenate([np.zeros((self.cfg['wx']*self.cfg['window_past'], shape1)), self.dfs, np.zeros((self.cfg['wx']*self.cfg['window_future'], shape1))], axis=0)
+
+        # for self.dfs count rows that have at least a single one between the rows 4,7
+        self.pos_length = 0
+        self.pos = {}
+        for i in range(self.dfs.shape[0]):
+            if sum(self.dfs[i, 4:7]) > 0:
+                self.pos[self.pos_length] = i
+                self.pos_length += 1
+
         print(f"Dataset initialized in {time.time() - tm} secs!")
         gc.collect()
         
@@ -282,9 +291,21 @@ class FOGDataset(Dataset):
             df['tdcs'] = 0
         
         return np.array(df)
+    
+    def get_index(self, index):
+        if self.task == 'classify':
+            nindex = self.pos[index] + self.cfg['wx']*self.cfg['window_past']
+            c = 0
+            while nindex < self.length and sum(self.dfs[nindex, 4:7]) == 0:
+                c += 1
+                nindex += 1
+            return nindex
+        return index
             
     def __getitem__(self, index):
-        if self.split == "train":
+        if self.split != "test" and self.task == 'classify':
+            row_idx = self.get_index(index)
+        elif self.split == "train":
             row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
         elif self.split == "test":
             for i,e in enumerate(self.end_indices):
@@ -322,6 +343,8 @@ class FOGDataset(Dataset):
         return x, y, t
 
     def __len__(self):
+        if self.task == 'classify':
+            return self.pos_length
         return self.length
 
 class FOGPretrainDataset(Dataset):
