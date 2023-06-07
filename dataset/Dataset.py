@@ -252,7 +252,7 @@ class FOGDataset(Dataset):
             _length += df.shape[0]
             self.end_indices.append(_length)
         
-        self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float16)
+        self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float32)
         self.length = self.dfs.shape[0]
         
         shape1 = self.dfs.shape[1]
