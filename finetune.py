@@ -52,8 +52,10 @@ from utils import *
 train_fpaths_tdcs, valid_fpaths_tdcs = split_data(cfg, 'tdcsfog', 2)
 #split_analysis(cfg, 'defog')
 train_fpaths_de, valid_fpaths_de = split_data(cfg, 'defog', 2)
-train_fpaths = [(f, 'de') for f in train_fpaths_de] + [(f, 'tdcs') for f in train_fpaths_tdcs]
-valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
+# train_fpaths = [(f, 'de') for f in train_fpaths_de] + [(f, 'tdcs') for f in train_fpaths_tdcs]
+# valid_fpaths = [(f, 'de') for f in valid_fpaths_de] + [(f, 'tdcs') for f in valid_fpaths_tdcs]
+train_fpaths = [(f, 'tdcs') for f in train_fpaths_tdcs]
+valid_fpaths = [(f, 'tdcs') for f in train_fpaths_tdcs]
 gc.collect()
 
 from dataset.Dataset import FOGPatchDataSet

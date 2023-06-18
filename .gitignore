@@ -7,3 +7,4 @@ submission.csv
 __pycache__/
 configs/
 p.py
+.ipynb_checkpoints/

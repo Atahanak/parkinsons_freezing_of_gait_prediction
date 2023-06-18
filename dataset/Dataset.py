@@ -254,7 +254,8 @@ class FOGDataset(Dataset):
         
         self.dfs = np.concatenate(self.dfs, axis=0).astype(np.float32)
         self.length = self.dfs.shape[0]
-        
+        print('Number of samples', self.length)
+        print(self.dfs.shape)
         shape1 = self.dfs.shape[1]
         
         if state == "pretrain":
@@ -279,6 +280,7 @@ class FOGDataset(Dataset):
             df = pd.read_parquet(f)
         elif self.state == "finetune": 
             df = pd.read_csv(f)
+            print(df.shape)
             
         if self.split == "test" or self.state == "pretrain":
             return np.array(df)
@@ -303,7 +305,7 @@ class FOGDataset(Dataset):
         return index
             
     def __getitem__(self, index):
-        if self.split != "test" and self.task == 'classify':
+        if self.state != 'pretrain' and self.split != "test" and self.task == 'classify':
             row_idx = self.get_index(index)
         elif self.split == "train":
             row_idx = random.randint(0, self.length-1) + self.cfg['wx']*self.cfg['window_past']
@@ -343,7 +345,7 @@ class FOGDataset(Dataset):
         return x, y, t
 
     def __len__(self):
-        if self.task == 'classify':
+        if self.state != 'pretrain' and self.task == 'classify':
             return self.pos_length
         return self.length
 

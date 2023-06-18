@@ -134,13 +134,13 @@ class FOGFinetuneModule(pl.LightningModule):
         return multiclass_average_precision(y_pred, target, num_classes=self.head.num_classes, average=None)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, pin_memory=True) #, num_workers=self.num_workers)
 
     def val_dataloader(self):
-        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True) #, num_workers=self.num_workers)
     
     def test_dataloader(self):
-        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+        return DataLoader(self.valid_dataset, batch_size=self.batch_size, pin_memory=True) #, num_workers=self.num_workers)
 
 class FOGModule(pl.LightningModule):
 
