@@ -1,6 +1,6 @@
 # Parkinson's Freezing of Gait Prediction
 
-This repository contains models and datasets developed for multi-variate time-series data. The codes are specifically written for the Kaggle competition [Parkinson's Freezing of Gait Prediction](https://www.kaggle.com/competitions/tlvmc-parkinsons-freezing-gait-prediction/overview).
+This repository contains models and datasets developed for multi-variate time-series data. The codes are specifically written for the Kaggle competition [Parkinson's Freezing of Gait Prediction](https://www.kaggle.com/competitions/tlvmc-parkinsons-freezing-gait-prediction/overview). The goal of this competition is to detect freezing of gait (FOG), a debilitating symptom that afflicts many people with Parkinson’s disease. Competitors need to develop a machine learning model trained on data collected from three wearable 3D lower back sensors. The model classifies if a given reading from the sensors is either `Start of Hesitation`, `Turn`, `Walking` or neither of them. The details regarding the data can be found [here](https://www.kaggle.com/competitions/tlvmc-parkinsons-freezing-gait-prediction/data).
 
 This repository implements MLP, CNN and Transformer-Encoder models. All of these models can be utilized with the scripts described below. Complete models that include the model body and the head are provided with `FOG` prefix.
 
