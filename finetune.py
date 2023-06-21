@@ -140,16 +140,16 @@ def train_model(module, model, train_loader, val_loader, test_loader, save_name 
     lmodel = module(cfg, model, loss_weights, **kwargs)
 
     # tune learning rate
-    print("Tuning learning rate...")
-    tuner = Tuner(trainer)
-    # Run learning rate finder
-    lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
-    # Auto-scale batch size with binary search
-    #tuner.scale_batch_size(lmodel, mode="binsearch")
-    # Pick point based on plot, or get suggestion
-    new_lr = lr_finder.suggestion()
-    print(f"New learning rate: {new_lr}")
-    print("Tuning done.")
+    # print("Tuning learning rate...")
+    # tuner = Tuner(trainer)
+    # # Run learning rate finder
+    # lr_finder = tuner.lr_find(lmodel, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    # # Auto-scale batch size with binary search
+    # #tuner.scale_batch_size(lmodel, mode="binsearch")
+    # # Pick point based on plot, or get suggestion
+    # new_lr = lr_finder.suggestion()
+    # print(f"New learning rate: {new_lr}")
+    # print("Tuning done.")
     
     pl.seed_everything(42) # To be reproducable
     trainer.fit(lmodel, train_loader, val_loader)

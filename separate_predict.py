@@ -136,17 +136,17 @@ if __name__ == '__main__':
         loss_module = nn.BCEWithLogitsLoss(weight=torch.tensor(loss_weights))
         lmodel = module(cfg, model, head, loss_module, train_dataset, val_dataset)
 
-        # tune learning rate
-        print("Tuning learning rate...")
-        tuner = Tuner(trainer)
-        # Run learning rate finder
-        lr_finder = tuner.lr_find(lmodel) #, train_dataloaders=train_loaders[0], val_dataloaders=val_loader)
-        # Auto-scale batch size with binary search
-        #tuner.scale_batch_size(lmodel, mode="binsearch")
-        # Pick point based on plot, or get suggestion
-        new_lr = lr_finder.suggestion()
-        print(f"New learning rate: {new_lr}")
-        print("Tuning done.")
+        # # tune learning rate
+        # print("Tuning learning rate...")
+        # tuner = Tuner(trainer)
+        # # Run learning rate finder
+        # lr_finder = tuner.lr_find(lmodel) #, train_dataloaders=train_loaders[0], val_dataloaders=val_loader)
+        # # Auto-scale batch size with binary search
+        # #tuner.scale_batch_size(lmodel, mode="binsearch")
+        # # Pick point based on plot, or get suggestion
+        # new_lr = lr_finder.suggestion()
+        # print(f"New learning rate: {new_lr}")
+        # print("Tuning done.")
         
         pl.seed_everything(42) # To be reproducable
         trainer.fit(lmodel) #, train_loaders[0], val_loader)
